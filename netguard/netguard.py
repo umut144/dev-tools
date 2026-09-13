@@ -76,13 +76,27 @@ SIM_NAME = "simulierter-Download"
 
 # Prozesse, die niemals per SIGSTOP angehalten werden (sonst haengt das System)
 NEVER_SUSPEND = {
+    # Einfrieren dieser Prozesse haengt Oberflaeche, Anmeldung oder das
+    # Prozessmanagement des Systems auf.
     "kernel_task", "launchd", "kernel", "WindowServer", "loginwindow",
     "configd", "mDNSResponder", "opendirectoryd", "securityd", "syslogd",
     "notifyd", "diskarbitrationd", "coreaudiod", "powerd", "hidd",
     "UserEventAgent", "distnoted", "Finder", "SystemUIServer", "netguard.py",
     "sshd", "Terminal", "iTerm2", "WindowManager", "trustd", "apsd",
     "bluetoothd", "nsurlsessiond", "symptomsd", "networkd", "remoted",
+    # Nachtrag aus dem Review: cfprefsd blockiert jede Einstellungsabfrage,
+    # runningboardd verwaltet Prozesszustaende, fileproviderd haengt Finder
+    # auf. cloudd und bird sind am Hotspot haeufige Vielverbraucher - sie
+    # hier zu schuetzen heisst, dass Stufe 2 gegen eine ausser Kontrolle
+    # geratene iCloud-Synchronisation nichts ausrichtet; dafuer ist Stufe 3
+    # zustaendig. Siehe TASKS.md.
+    "cfprefsd", "runningboardd", "fileproviderd", "softwareupdated",
+    "Dock", "cloudd", "bird",
 }
+
+# Ab diesem Anteil am Fenstervolumen gilt ein Prozess als Verursacher.
+MIN_SUSPEND_SHARE = 0.20
+
 
 # Attribution gilt als unplausibel, wenn die Summe der Prozess-Bytes das
 # netstat-Delta um diesen Faktor (plus Toleranz) uebersteigt.
@@ -94,9 +108,14 @@ IMPLAUSIBLE_STREAK = 3
 
 
 def run(cmd, timeout=15):
-    """Kommando ausfuehren, stdout als Text zurueck. Fehler -> leerer String."""
+    """
+    Kommando ausfuehren, stdout als Text zurueck. Fehler -> leerer String.
+    LC_ALL=C, weil hier Ausgaben geparst werden: `ps -o lstart=` etwa
+    formatiert das Datum sonst nach Locale.
+    """
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           env=dict(os.environ, LC_ALL="C", LANG="C"))
         if VERBOSE and p.returncode != 0:
             err = (p.stderr or "").strip().splitlines()
             print(f"[netguard] {cmd[0]} rc={p.returncode}: {err[0] if err else ''}",
@@ -140,6 +159,21 @@ def wifi_device():
     out = run(["/usr/sbin/networksetup", "-listallhardwareports"])
     m = re.search(r"Hardware Port:\s*(?:Wi-Fi|AirPort)\s*\nDevice:\s*(\S+)", out)
     return m.group(1) if m else None
+
+
+def default_nettop_type(ifname):
+    """
+    nettop auf den Typ des gemessenen Interfaces einschraenken. Sonst zaehlt
+    es auch Loopback- und AirDrop-Verkehr mit, den der netstat-Zaehler des
+    Interfaces nie sieht - die beiden Summen passen dann nicht zusammen,
+    obwohl jede fuer sich stimmt.
+    """
+    wifi = wifi_device()
+    if wifi and ifname == wifi:
+        return "wifi"
+    if ifname.startswith(("en", "bridge")):
+        return "wired"
+    return None          # utun/VPN und Unbekanntes lieber nicht einschraenken
 
 
 def console_user():
@@ -567,25 +601,39 @@ def parse_stage(spec):
 PF_ANCHOR_FILE = "/etc/pf.anchors/netguard"
 
 
-def _targets(procs, limit, snap):
+def _is_protected(name, comm=""):
     """
-    Kandidaten zum Anhalten/Beenden: nie netguard selbst, nie PID 0/1, nie
-    etwas aus NEVER_SUSPEND - und es wird weitergesucht, bis `limit`
-    brauchbare Kandidaten zusammen sind (nicht nur in den Top-3 geschaut).
+    nettop kuerzt Prozessnamen auf etwa 15 Zeichen ("softwareupdate"), die
+    Schutzliste enthaelt die vollen. Deshalb zusaetzlich ein Praefixvergleich
+    - und der ungekuerzte comm-Name aus ps, wo er vorliegt.
+    """
+    cands = {name, os.path.basename(name), os.path.basename(comm)} - {""}
+    if cands & NEVER_SUSPEND:
+        return True
+    return any(len(c) >= 10 and any(p.startswith(c) for p in NEVER_SUSPEND)
+               for c in cands)
+
+
+def _targets(procs, limit, snap, total=0, min_share=MIN_SUSPEND_SHARE):
+    """
+    Wen Stufe 2 und 3 anfassen duerfen. Nie netguard selbst, nie PID 0/1, nie
+    etwas Geschuetztes - und nur, wer im Fenster wirklich ins Gewicht faellt:
+    unter `min_share` Anteil bleibt ein Prozess unbehelligt, damit nicht der
+    Videocall mit 500 KB neben dem 30-MB-Download eingefroren wird.
+    Traegt niemand genug bei, trifft es den groessten allein - sonst waere
+    die Stufe wirkungslos.
     """
     own = {os.getpid(), os.getppid()}
-    out = []
-    for name, pid, _ in procs:
-        if len(out) >= limit:
-            break
-        if pid <= 1 or pid in own:
-            continue
-        comm = (snap or {}).get(pid, {}).get("comm", "")
-        names = {name, os.path.basename(name), os.path.basename(comm)} - {""}
-        if names & NEVER_SUSPEND:
-            continue
-        out.append((name, pid))
-    return out
+    eligible = [(n, p, b) for n, p, b in procs
+                if p > 1 and p not in own and b > 0
+                and not _is_protected(n, (snap or {}).get(p, {}).get("comm", ""))]
+    if not eligible:
+        return []
+    floor = total * min_share if total > 0 else 0
+    picked = [e for e in eligible if e[2] >= floor][:limit]
+    if not picked:
+        picked = eligible[:1]
+    return [(n, p) for n, p, _ in picked]
 
 
 def _remember(logger, key, entries):
@@ -595,10 +643,10 @@ def _remember(logger, key, entries):
     logger.write_state(st)
 
 
-def act_suspend(procs, logger, limit=3, snap=None):
+def act_suspend(procs, logger, limit=3, snap=None, total=0):
     """Top-Verursacher mit SIGSTOP einfrieren (reversibel via SIGCONT)."""
     stopped = []
-    for name, pid in _targets(procs, limit, snap):
+    for name, pid in _targets(procs, limit, snap, total):
         try:
             start = proc_start_key(pid)
             os.kill(pid, signal.SIGSTOP)
@@ -610,13 +658,13 @@ def act_suspend(procs, logger, limit=3, snap=None):
     return stopped
 
 
-def act_kill(procs, logger, limit=3, snap=None, grace=3.0):
+def act_kill(procs, logger, limit=3, snap=None, total=0, grace=3.0):
     """
     SIGTERM, nach einer Gnadenfrist SIGKILL. Unwiderruflich - laufende
     Uploads oder ungesicherte Arbeit koennen dabei verloren gehen.
     """
     killed = []
-    for name, pid in _targets(procs, limit, snap):
+    for name, pid in _targets(procs, limit, snap, total):
         try:
             os.kill(pid, signal.SIGTERM)
             killed.append({"name": name, "pid": pid, "signal": "TERM", "ts": now_iso()})
@@ -778,10 +826,15 @@ class Monitor:
         self.level_time = 0.0
         self.stop_requested = False
         self.cleaned_up = False
-        self.mode = "diff" if getattr(args, "attrib", "auto") == "diff" else "delta"
+        self.mode = "diff" if getattr(args, "attrib", "delta") == "diff" else "delta"
+        self.nettop_type = args.nettop_type or default_nettop_type(self.iface)
         self.implausible = 0
-        self.no_delta_streak = 0
         self.warned_no_delta = False
+        self.last_warn = 0.0
+        # 'netguard unblock' laeuft als eigener Prozess; state.json ist der
+        # einzige Kanal, ueber den der Monitor davon erfaehrt.
+        self.last_unblock = self.log.read_state().get("unblocked_at")
+        self.daily_override = False
         self.stages = self._build_stages()
         self._restore_day_total()
 
@@ -813,7 +866,8 @@ class Monitor:
     def rollover_day(self):
         today = datetime.now().strftime("%Y-%m-%d")
         if today != self.day:
-            self.day, self.day_bytes, self.level = today, 0, 0
+            self.day, self.day_bytes = today, 0
+            self.daily_override = False
             self._persist_day_total()
 
     def maybe_switch_interface(self):
@@ -824,9 +878,35 @@ class Monitor:
         if cur and cur != self.iface:
             print(f"[netguard] Interface gewechselt: {self.iface} -> {cur}")
             self.iface = cur
+            self.nettop_type = self.a.nettop_type or default_nettop_type(cur)
             self.window.clear()
 
-    # -- Fenster-Buchhaltung -------------------------------------------------
+    def check_unblocked(self):
+        """
+        Hat jemand entsperrt? Ohne diesen Blick bliebe der Monitor auf seiner
+        Stufe stehen: nach Stufe 3 plus unblock liefe der Download bis zum
+        Ende des Cooldowns unbeobachtet weiter, mit Tageslimit sogar bis
+        Mitternacht.
+        """
+        if not self.level:
+            return
+        ts = self.log.read_state().get("unblocked_at")
+        if not ts or ts == self.last_unblock:
+            return
+        self.last_unblock = ts
+        self.level = 0
+        self.window.clear()      # sonst loest das alte Fenster sofort neu aus
+        limit = self.a.daily_mb * 1024 * 1024 if self.a.daily_mb else 0
+        if limit and self.day_bytes >= limit:
+            # Wer nach dem Tageslimit entsperrt, will bewusst weitermachen -
+            # sonst wuerde die naechste Messung sofort wieder sperren.
+            self.daily_override = True
+            print("[netguard] unblock erkannt - Tageslimit fuer heute ausgesetzt, "
+                  "die Burst-Stufen bleiben scharf.")
+        else:
+            print("[netguard] unblock erkannt - wieder scharf ab Stufe 1.")
+
+    # -- Fenster-Buchhaltung
 
     def push(self, ts, total_delta, proc_deltas):
         self.window.append((ts, total_delta, proc_deltas))
@@ -852,48 +932,46 @@ class Monitor:
         """nettop-Sample in Bytes pro Prozess umrechnen (je nach Modus)."""
         if self.mode == "delta":
             if not ok:
-                # Liefert nettop grundsaetzlich kein zweites Sample, ist der
-                # Delta-Modus auf diesem System nicht zu gebrauchen - dann
-                # lieber kumulativ diffen als gar keine Zuordnung zu haben.
-                self.no_delta_streak += 1
                 if not self.warned_no_delta:
                     print("[netguard] nettop liefert kein zweites Sample - "
-                          "Attribution fuer diesen Zyklus unbekannt.", file=sys.stderr)
+                          "Attribution fuer diesen Zyklus unbekannt. Haelt das an: "
+                          "--attrib diff.", file=sys.stderr)
                     self.warned_no_delta = True
-                if (getattr(self.a, "attrib", "auto") == "auto"
-                        and self.no_delta_streak >= 2):
-                    self.mode = "diff"
-                    self.prev_raw = None
-                    print("[netguard] kein Delta-Modus auf diesem System - "
-                          "wechsle auf kumulatives Diffen.", file=sys.stderr)
-                    return {}
                 self.prev_raw = raw
                 return {}
-            self.no_delta_streak = 0
             self.prev_raw = raw
             return {k: bi + bo for k, (bi, bo) in raw.items() if bi or bo}
-        # Fallback: kumulative Werte gegen den vorigen Zyklus diffen
+        # Nur auf ausdrueckliche Anweisung: kumulative Werte gegen den
+        # vorigen Zyklus diffen. Schliesst waehrenddessen ein Socket, faellt
+        # sein Anteil aus der Summe und der Prozess bekommt sein gesamtes
+        # bisheriges Volumen als "Delta" zugeschrieben.
         prev, self.prev_raw = self.prev_raw, raw
         if prev is None:
             return {}
         return {k: di + do for k, (di, do) in diff_procs(prev, raw).items()}
 
-    def check_plausibility(self, attributed, total_delta):
+    def warn_if_implausible(self, attributed, total_delta):
         """
-        Sicherheitsnetz: liegt die Summe der Prozess-Bytes dauerhaft weit
-        ueber dem netstat-Delta, liefert nettop keine Deltas -> Modus wechseln.
+        Frueher wurde hier automatisch auf kumulatives Diffen umgeschaltet.
+        Das war ein Fehlgriff: ausgeloest hat es der Parserfehler aus 268429c,
+        und im Diff-Modus wird bei schliessenden Sockets der falsche Prozess
+        zum groessten Verursacher - und damit eingefroren. Jetzt gibt es nur
+        noch einen Hinweis, die Entscheidung trifft --attrib.
         """
-        if getattr(self.a, "attrib", "auto") != "auto" or self.mode != "delta":
+        if self.mode != "delta" or total_delta <= 1024 * 1024:
+            self.implausible = 0
             return
-        bad = (total_delta > 1024 * 1024
-               and attributed > IMPLAUSIBLE_FACTOR * total_delta + IMPLAUSIBLE_SLACK)
-        self.implausible = self.implausible + 1 if bad else 0
-        if self.implausible >= IMPLAUSIBLE_STREAK:
-            self.mode = "diff"
-            self.prev_raw = None
-            self.window.clear()
-            print("[netguard] nettop-Deltas unplausibel - wechsle auf Diff-Modus "
-                  "(--attrib delta erzwingt das alte Verhalten).", file=sys.stderr)
+        if attributed > IMPLAUSIBLE_FACTOR * total_delta + IMPLAUSIBLE_SLACK:
+            self.implausible += 1
+            now = time.monotonic()
+            if self.implausible >= IMPLAUSIBLE_STREAK and now - self.last_warn > 600:
+                self.last_warn = now
+                print(f"[netguard] Zuordnung unplausibel: {human(attributed)} auf "
+                      f"Prozesse verteilt, aber nur {human(total_delta)} am "
+                      f"Interface. Laeuft Verkehr ueber ein anderes Interface "
+                      f"(Loopback, AirDrop, VPN)?", file=sys.stderr)
+        else:
+            self.implausible = 0
 
     # -- Messung -------------------------------------------------------------
 
@@ -909,7 +987,7 @@ class Monitor:
 
         # netstat direkt um das nettop-Fenster herum -> gleiche Zeitbasis
         i0 = iface_counters(self.iface)
-        raw, ok = nettop_sample(self.a.interval, self.a.nettop_type,
+        raw, ok = nettop_sample(self.a.interval, self.nettop_type,
                                 delta=(self.mode == "delta"))
         i1 = iface_counters(self.iface)
         m1, w1 = time.monotonic(), time.time()
@@ -920,7 +998,7 @@ class Monitor:
             total = max(0, i1[0] - i0[0]) + max(0, i1[1] - i0[1])
         procs = self.attribute(raw, ok)
         attributed = sum(procs.values())
-        self.check_plausibility(attributed, total)
+        self.warn_if_implausible(attributed, total)
         # Standby oder haengender Aufruf: der Zaehlerstand deckt dann eine viel
         # laengere Zeit ab als ein Fenster - nicht als Burst werten.
         gap_limit = 3 * self.a.interval + 10
@@ -931,9 +1009,9 @@ class Monitor:
     # -- Incident ------------------------------------------------------------
 
     def build_incident(self, level, stage, reason, amount, top, result, residual,
-                       skipped=0):
+                       skipped=0, snap=None):
         """Langsamer Teil (ps/lsof) - laeuft erst NACH der Aktion."""
-        snap = ps_snapshot()
+        snap = snap if snap is not None else ps_snapshot()
         culprits = []
         for name, pid, byts in top:
             if byts <= 0:
@@ -991,15 +1069,16 @@ class Monitor:
     def execute_action(self, stage, top, snap=None):
         """Nur blocken - so schnell wie moeglich, ohne Forensik davor."""
         act = stage.action
+        total = self.window_total()
         if self.sim:
             names = ", ".join(f"{n}.{p}" for n, p, _ in top[:3]) or "-"
             print(f"   [SIMULATION] wuerde jetzt '{act}' ausfuehren ({names}) - "
                   f"es passiert nichts.")
             return [{"dry_run": act}]
         if act == "suspend":
-            return act_suspend(top, self.log, snap=snap)
+            return act_suspend(top, self.log, snap=snap, total=total)
         if act == "kill":
-            return act_kill(top, self.log, snap=snap)
+            return act_kill(top, self.log, snap=snap, total=total)
         if act == "iface":
             return act_iface_down(self.iface, self.log)
         if act == "wifi":
@@ -1011,8 +1090,12 @@ class Monitor:
 
     def handle_trip(self, level, stage, reason, amount, residual, skipped=0):
         top = self.window_top()
-        # 1. blocken  2. Ton  3. Notification  4. erst dann ps/lsof
-        result = self.execute_action(stage, top)
+        # Der ps-Schnappschuss muss VOR die Aktion: er kostet nur zwei
+        # ps-Aufrufe und entscheidet mit, wen wir anfassen duerfen - nettop
+        # kuerzt Prozessnamen, die Schutzliste braucht die vollen. Teuer ist
+        # das lsof in build_incident, und das laeuft weiter danach.
+        snap = ps_snapshot() if stage.action in ("suspend", "kill") else None
+        result = self.execute_action(stage, top, snap=snap)
         play_alert(sound=stage.sound, repeat=stage.repeat, volume=stage.volume,
                    say_text=(stage.say or None))
         names = ", ".join(n for n, _, b in top[:3] if b > 0) or "unbekannt"
@@ -1020,7 +1103,7 @@ class Monitor:
             notify(f"netguard: Stufe {level}/{len(self.stages)}",
                    f"{human(amount)} in {self.a.window}s - {names} [{stage.action}]")
         inc = self.build_incident(level, stage, reason, amount, top, result,
-                                  residual, skipped)
+                                  residual, skipped, snap=snap)
         self.log.incident(inc)
         self.print_incident(inc)
         return inc
@@ -1085,6 +1168,7 @@ class Monitor:
                 self.maybe_switch_interface()
                 last_iface_check = cycle_start
             self.rollover_day()
+            self.check_unblocked()
 
             s = self.measure()
             now = s["now"]
@@ -1123,7 +1207,8 @@ class Monitor:
                       f"Stufe {self.level}  top: {tag}")
 
             # --- Warnstufen pruefen
-            daily_hit = bool(daily_limit and self.day_bytes >= daily_limit)
+            daily_hit = bool(daily_limit and not self.daily_override
+                             and self.day_bytes >= daily_limit)
             reached, amount = 0, win
             for i, stage in enumerate(self.stages):
                 if win >= stage.limit:
@@ -1475,9 +1560,11 @@ def build_parser():
     m.add_argument("--simulate-seconds", type=int, default=0, metavar="S",
                    help="Testmodus nach S Sekunden beenden (0 = bis zur "
                         "hoechsten Stufe)")
-    m.add_argument("--attrib", default="auto", choices=["auto", "delta", "diff"],
-                   help="Zuordnung: nettop-Deltas, alter Diff-Modus oder "
-                        "automatischer Fallback (Default)")
+    m.add_argument("--attrib", default="delta", choices=["delta", "diff"],
+                   help="Zuordnung: nettop-Deltas (Default) oder kumulatives "
+                        "Diffen zweier Samples. Kein automatischer Wechsel: "
+                        "der Diff-Modus kann bei schliessenden Sockets den "
+                        "falschen Prozess als Verursacher ausweisen.")
     m.add_argument("--cooldown", type=int, default=300,
                    help="Sekunden bis erneut ausgeloest werden kann")
     m.add_argument("--log-floor-kb", type=int, default=64,
