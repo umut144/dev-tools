@@ -275,26 +275,29 @@ def nettop_sample(seconds, nettop_type=None, delta=True):
     out = run(cmd, timeout=secs * 3 + 20)
 
     samples, cur, labels = [], None, None
-    for raw in out.splitlines():
-        parts = [p.strip() for p in raw.split(",")]
-        if not parts or not parts[0]:
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if not parts:
             continue
-        # Header - wiederholt sich je Sample. Achtung: Header und Datenzeilen
-        # haben unterschiedlich viele Leerfelder, deshalb NICHT ueber Index
-        # mappen, sondern ueber die Reihenfolge der nicht-leeren Labels.
+        # Kopfzeile, z.B. ",bytes_in,bytes_out," - das erste Feld ist LEER,
+        # deshalb darf hier nicht vorher auf "leeres erstes Feld" gefiltert
+        # werden. Sie wiederholt sich pro Sample und ist auf aktuellen
+        # macOS-Versionen die einzige Sample-Grenze.
+        # Achtung: Kopf- und Datenzeilen haben unterschiedlich viele
+        # Leerfelder, deshalb NICHT ueber Index mappen, sondern ueber die
+        # Reihenfolge der nicht-leeren Labels.
         if "bytes_in" in parts or "bytes_out" in parts:
             labels = [p for p in parts[1:] if p]
+            cur = {}
+            samples.append(cur)
             continue
-        # Zeitstempel-Zeile trennt die Samples
+        if not parts[0] or labels is None:
+            continue
+        # Aeltere Versionen trennen die Samples zusaetzlich per Zeitstempel
         if re.match(r"^\d{1,2}:\d{2}:\d{2}", parts[0]):
             cur = {}
             samples.append(cur)
             continue
-        if labels is None:
-            continue
-        if cur is None:                     # keine Zeitstempel-Zeile gesehen
-            cur = {}
-            samples.append(cur)
         key = parts[0]
         if "." not in key:
             continue
@@ -310,6 +313,10 @@ def nettop_sample(seconds, nettop_type=None, delta=True):
         if "bytes_in" not in row and "bytes_out" not in row:
             continue
         cur[(name, int(pid))] = (row.get("bytes_in", 0), row.get("bytes_out", 0))
+
+    # abgeschnittener oder leerer letzter Block (Kopfzeile ohne Daten)
+    while len(samples) > 1 and not samples[-1]:
+        samples.pop()
 
     if not samples:
         return {}, False
@@ -1176,6 +1183,17 @@ def cmd_top(args):
     i0 = iface_counters(iface)
     raw, ok = nettop_sample(dur, args.nettop_type, delta=True)
     i1 = iface_counters(iface)
+
+    tot = None
+    if i0 and i1:
+        tot = max(0, i1[0] - i0[0]) + max(0, i1[1] - i0[1])
+    attributed = sum(bi + bo for bi, bo in raw.values())
+    # Liegt die Summe weit ueber dem, was das Interface gesehen hat, waren es
+    # keine Deltas, sondern kumulative Werte -> genauso unbrauchbar.
+    if ok and tot is not None and attributed > IMPLAUSIBLE_FACTOR * tot + IMPLAUSIBLE_SLACK:
+        print(f"nettop-Werte unplausibel ({human(attributed)} zugeordnet bei "
+              f"{human(tot)} am Interface) - messe kumulativ nach ...", file=sys.stderr)
+        ok = False
 
     if not ok:
         # Kein Delta-Modus auf diesem System: zwei kumulative Momentaufnahmen

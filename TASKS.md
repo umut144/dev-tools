@@ -9,13 +9,18 @@ Offene Punkte im Monorepo. Erledigtes fliegt raus, nicht ab.
       wird nicht uebernommen. Erst noetig, wenn netguard dauerhaft im
       Hintergrund laufen soll statt im Terminal - aktuell bewusst nicht
       gebraucht.
-- [ ] **nettop-Deltamodus auf echter Hardware bestaetigen.** Dass
-      `nettop -d -L 2` im Logging-Modus wirklich Deltas liefert, ist bisher
-      nur gegen synthetische Ausgaben geprueft. Die Plausibilitaetspruefung
-      gegen das netstat-Delta faengt den Fehlerfall ab, ersetzt aber keine
-      Messung: ein paar Tage `samples.jsonl` ansehen und pruefen, ob
-      `unattributed_bytes` klein bleibt und `attribution_mode` auf `delta`
-      steht.
+- [x] ~~nettop-Ausgabe auf echter Hardware pruefen.~~ Erledigt: auf
+      macOS 26.6 heisst die Kopfzeile `,bytes_in,bytes_out,` - erstes Feld
+      leer - und Zeitstempel-Zeilen gibt es nicht, die wiederholte Kopfzeile
+      ist die Sample-Grenze. Der Parser verwarf beides und lieferte deshalb
+      gar keine Zuordnung. Behoben, Regressionstest gegen die echte Ausgabe.
+- [ ] **Liefert `nettop -d` echte Deltas?** Weiterhin offen: der zweite
+      Block koennte auch nur wieder kumulative Werte enthalten. `netguard
+      top -v` beantwortet das - steht unter "davon zugeordnet" eine Zahl in
+      der Groessenordnung des Interface-Totals, stimmt es; sind es hunderte
+      MB, wird `-d` ignoriert und netguard schaltet selbst auf kumulatives
+      Diffen um. Faellt es dauerhaft auf `diff` zurueck, lohnt sich die
+      Ueberlegung, den Diff-Modus gleich zum Standard zu machen.
 - [ ] **zsh-Integration mit echtem zsh testen.** Die Datei wurde nur
       strukturell geprueft (Klammern, Quotes, case/esac), nie ausgefuehrt -
       in der Entwicklungsumgebung war kein zsh verfuegbar.
