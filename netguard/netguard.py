@@ -773,6 +773,7 @@ class Monitor:
         self.cleaned_up = False
         self.mode = "diff" if getattr(args, "attrib", "auto") == "diff" else "delta"
         self.implausible = 0
+        self.no_delta_streak = 0
         self.warned_no_delta = False
         self.stages = self._build_stages()
         self._restore_day_total()
@@ -844,12 +845,24 @@ class Monitor:
         """nettop-Sample in Bytes pro Prozess umrechnen (je nach Modus)."""
         if self.mode == "delta":
             if not ok:
+                # Liefert nettop grundsaetzlich kein zweites Sample, ist der
+                # Delta-Modus auf diesem System nicht zu gebrauchen - dann
+                # lieber kumulativ diffen als gar keine Zuordnung zu haben.
+                self.no_delta_streak += 1
                 if not self.warned_no_delta:
                     print("[netguard] nettop liefert kein zweites Sample - "
                           "Attribution fuer diesen Zyklus unbekannt.", file=sys.stderr)
                     self.warned_no_delta = True
+                if (getattr(self.a, "attrib", "auto") == "auto"
+                        and self.no_delta_streak >= 2):
+                    self.mode = "diff"
+                    self.prev_raw = None
+                    print("[netguard] kein Delta-Modus auf diesem System - "
+                          "wechsle auf kumulatives Diffen.", file=sys.stderr)
+                    return {}
                 self.prev_raw = raw
                 return {}
+            self.no_delta_streak = 0
             self.prev_raw = raw
             return {k: bi + bo for k, (bi, bo) in raw.items() if bi or bo}
         # Fallback: kumulative Werte gegen den vorigen Zyklus diffen
@@ -1165,8 +1178,16 @@ def cmd_top(args):
     i1 = iface_counters(iface)
 
     if not ok:
-        print("Warnung: nettop lieferte kein Delta-Sample - Zuordnung unvollstaendig.",
+        # Kein Delta-Modus auf diesem System: zwei kumulative Momentaufnahmen
+        # nehmen und selbst diffen. Kostet die Messdauer ein zweites Mal.
+        print(f"nettop kennt hier keinen Delta-Modus - messe {dur}s kumulativ nach ...",
               file=sys.stderr)
+        i0 = iface_counters(iface)
+        p0, _ = nettop_sample(1, args.nettop_type, delta=False)
+        time.sleep(dur)
+        p1, _ = nettop_sample(1, args.nettop_type, delta=False)
+        i1 = iface_counters(iface)
+        raw = diff_procs(p0, p1)
     ranked = sorted(((k, v[0] + v[1]) for k, v in raw.items()),
                     key=lambda kv: kv[1], reverse=True)
     attributed = sum(b for _, b in ranked)

@@ -7,6 +7,9 @@
 #
 # Danach:
 #   netguard            # ueberwachen (fragt nach dem sudo-Passwort)
+#
+# netguard ist eine zsh-Funktion, kein Programm: 'sudo netguard' findet sie
+# nicht ("command not found"). Die Funktion ruft sudo selbst auf.
 #   netguard test       # Trockenlauf mit 4 MB/s, ohne echten Verbrauch
 #   ng status           # laeuft gerade eine Sperre?
 #   ng unblock          # alles wieder freigeben
@@ -32,8 +35,8 @@ fi
 : ${NETGUARD_WINDOW:=10}        # Messfenster in Sekunden
 : ${NETGUARD_INTERVAL:=2}       # Messtakt in Sekunden
 : ${NETGUARD_S1_MB:=12}         # Stufe 1: nur Warnton
-: ${NETGUARD_S2_MB:=24}         # Stufe 2: Verursacher einfrieren (SIGSTOP)
-: ${NETGUARD_S3_MB:=36}         # Stufe 3: WLAN aus
+: ${NETGUARD_S2_MB:=30}         # Stufe 2: Verursacher einfrieren (SIGSTOP)
+: ${NETGUARD_S3_MB:=55}         # Stufe 3: WLAN aus
 : "${NETGUARD_S1_SOUND:=Ping}"
 : "${NETGUARD_S2_SOUND:=Sosumi}"
 : "${NETGUARD_S3_SOUND:=Submarine}"
@@ -53,6 +56,9 @@ netguard - Datenverbrauch ueberwachen und stufenweise bremsen
   netguard report         Die letzten Vorfaelle zusammenfassen
   netguard sound [Name]   Einen Systemsound probehoeren
   netguard help           Diese Hilfe
+
+netguard ruft sudo selbst auf. 'sudo netguard ...' schlaegt fehl, weil sudo
+Shell-Funktionen nicht kennt.
 
 Stufen (in shell/netguard.zsh aenderbar):
 HELP

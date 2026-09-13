@@ -25,14 +25,24 @@ exec zsh
 
 `ng` ist ein Alias fuer `netguard`.
 
+`netguard` ist eine zsh-Funktion, kein Programm im Pfad: `sudo netguard ...`
+scheitert mit *command not found*, weil sudo keine Shell-Funktionen kennt.
+Die Funktion ruft sudo dort auf, wo es gebraucht wird.
+
 ## Die drei Stufen
 
 Gemessen wird in einem gleitenden Fenster von 10 Sekunden:
 
 1. **ab 12 MB** (= 1,2 MB/s anhaltend) - Warnton `Ping`, Mitteilung, sonst nichts
-2. **ab 24 MB** (= 2,4 MB/s) - `Sosumi` dreimal, der groesste Verursacher wird
+2. **ab 30 MB** (= 3,0 MB/s) - `Sosumi` dreimal, der groesste Verursacher wird
    mit `SIGSTOP` eingefroren. Reversibel: `netguard unblock` setzt ihn fort.
-3. **ab 36 MB** (= 3,6 MB/s) - `Submarine` fuenfmal, Sprachansage, WLAN aus.
+3. **ab 55 MB** (= 5,5 MB/s) - `Submarine` fuenfmal, Sprachansage, WLAN aus.
+
+Die Abstaende zwischen den Stufen (18 und 25 MB) sind mit Absicht groesser
+als der Zuwachs eines Messtakts: geprueft wird erst, wenn ein Sample fertig
+ist, also waechst das Fenster um `Rate x Intervall` auf einmal. Bei Intervall
+2 muesste ein Download schneller als 9 MB/s laufen, damit Stufe 1 gar nicht
+erst zum Zug kommt.
 
 Jede Stufe loest nur einmal aus. Beruhigt sich der Verbrauch fuer die Dauer
 von `--cooldown` (Standard 300 s) unter Stufe 1, ist netguard wieder scharf.
@@ -46,12 +56,13 @@ runter, statt gar nichts zu tun.
 
 ### Die Schwellen im Alltag
 
-| Was | Verbrauch | Reaktion |
-|---|---|---|
-| Spotify | ~0,04 MB/s | nichts |
-| Videocall (Zoom/FaceTime) | 0,2-0,4 MB/s | nichts |
-| Netflix HD | ~0,6 MB/s | Stufe 1 |
-| Download / Systemupdate | 2-10 MB/s | Stufe 2-3 in Sekunden |
+| Was | Verbrauch | im 10s-Fenster | Reaktion |
+|---|---|---|---|
+| Spotify | ~0,04 MB/s | 0,4 MB | nichts |
+| Videocall (Zoom/FaceTime) | 0,2-0,4 MB/s | 2-4 MB | nichts |
+| Netflix HD | ~0,6 MB/s | 6 MB | nichts |
+| 4K-Stream | ~2 MB/s | 20 MB | Stufe 1 |
+| Download / Systemupdate | 2-10 MB/s | 20-100 MB | Stufe 1-3 in Sekunden |
 
 Wer die Stufen auf ein 60-Sekunden-Fenster zieht, trifft damit auch normale
 Videocalls. Fenster und Schwellen stehen oben in `shell/netguard.zsh`.
