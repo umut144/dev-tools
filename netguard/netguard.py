@@ -203,36 +203,61 @@ def play_alert(sound="Sosumi", repeat=3, volume=1.5, say_text=None):
     Hoerbarer Alarm ueber afplay - unabhaengig von Benachrichtigungs-
     Einstellungen und 'Nicht stoeren'. sound=None/'none' schaltet ihn ab.
     Laeuft im Hintergrund, damit das Monitoring nicht blockiert.
+    Rueckgabe: die gestarteten Prozesse, damit der Aufrufer vor dem Beenden
+    auf sie warten kann - sonst schneidet das Programmende den Alarm ab.
     """
+    procs = []
+    chain = []
     if sound and sound.lower() != "none":
         path = sound if os.path.isabs(sound) else f"{SOUND_DIR}/{sound}.aiff"
         if os.path.exists(path):
-            one = f"/usr/bin/afplay -v {float(volume)} {shlex.quote(path)}"
-            inner = "; ".join([one] * max(1, int(repeat)))
-            try:
-                subprocess.Popen(_as_console_user(["/bin/sh", "-c", inner]),
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except OSError:
-                pass
+            chain += [f"/usr/bin/afplay -v {float(volume)} {shlex.quote(path)}"] \
+                     * max(1, int(repeat))
         else:
             print(f"[netguard] Sound nicht gefunden: {path}", file=sys.stderr)
-
     if say_text:
+        # An dieselbe Kette haengen, nicht parallel starten: sonst spricht
+        # die Ansage in die Toene hinein und man versteht sie nicht.
+        chain.append(f"/usr/bin/say {shlex.quote(say_text[:200])}")
+    if chain:
         try:
-            subprocess.Popen(_as_console_user(["/usr/bin/say", say_text[:200]]),
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            procs.append(subprocess.Popen(
+                _as_console_user(["/bin/sh", "-c", "; ".join(chain)]),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         except OSError:
+            pass
+    return procs
+
+
+def wait_alert(procs, timeout=30):
+    """
+    Warten, bis Ton und Ansage durch sind. Ohne das endet netguard mitten
+    im Alarm - bei 'testsound' nach zwei von drei Toenen, und mit
+    --stop-after-trip ausgerechnet dann, wenn gerade das Netz gekappt wurde.
+    """
+    end = time.monotonic() + timeout
+    for p in procs or []:
+        rest = end - time.monotonic()
+        if rest <= 0:
+            break
+        try:
+            p.wait(timeout=rest)
+        except (subprocess.TimeoutExpired, OSError):
             pass
 
 
-def notify(title, message, timeout=10):
+def notify(title, message, sound=None, timeout=10):
     """
-    macOS-Notification. Text wird als Argument uebergeben, nicht in das
+    macOS-Mitteilung. Text wird als Argument uebergeben, nicht in das
     AppleScript interpoliert - Prozessnamen sind Fremdeingabe.
     Timeout, weil osascript ohne aktive GUI-Session haengen kann.
+
+    Der Mitteilungston ist standardmaessig aus: er wuerde sich sonst ueber
+    die eigene Tonkette legen, die laut und mehrfach laeuft.
     """
+    ton = f' sound name "{sound}"' if sound else ""
     script = ("on run {msg, ttl}\n"
-              "  display notification msg with title ttl sound name \"Basso\"\n"
+              f"  display notification msg with title ttl{ton}\n"
               "end run")
     cmd = ["/usr/bin/osascript", "-e", script, message[:400], title[:80]]
     user = console_user()
@@ -879,6 +904,7 @@ class Monitor:
         # einzige Kanal, ueber den der Monitor davon erfaehrt.
         self.last_unblock = self.log.read_state().get("unblocked_at")
         self.daily_override = False
+        self.alert_procs = []
         self.stages = self._build_stages()
         self._restore_day_total()
 
@@ -1158,12 +1184,15 @@ class Monitor:
         # das lsof in build_incident, und das laeuft weiter danach.
         snap = ps_snapshot() if stage.action in ("suspend", "kill") else None
         result = self.execute_action(stage, top, snap=snap)
-        play_alert(sound=stage.sound, repeat=stage.repeat, volume=stage.volume,
-                   say_text=(stage.say or None))
+        self.alert_procs = play_alert(sound=stage.sound, repeat=stage.repeat,
+                                      volume=stage.volume,
+                                      say_text=(stage.say or None))
         names = ", ".join(n for n, _, b in top[:3] if b > 0) or "unbekannt"
         if not self.a.no_notify:
+            stumm = not stage.sound or stage.sound.lower() == "none"
             notify(f"netguard: Stufe {level}/{len(self.stages)}",
-                   f"{human(amount)} in {self.a.window}s - {names} [{stage.action}]")
+                   f"{human(amount)} in {self.a.window}s - {names} [{stage.action}]",
+                   sound="Basso" if stumm else None)
         inc = self.build_incident(level, stage, reason, amount, top, result,
                                   residual, skipped, snap=snap)
         self.log.incident(inc)
@@ -1188,6 +1217,7 @@ class Monitor:
             return
         self.cleaned_up = True
         self._persist_day_total()
+        wait_alert(self.alert_procs, timeout=8)   # Alarm nicht abschneiden
         if signum:
             print(f"\n[netguard] Signal {signum} - raeume auf.")
         if self.a.unblock_on_exit:
@@ -1466,9 +1496,12 @@ def cmd_testsound(args):
         print("Verfuegbare Systemsounds: " + ", ".join(avail))
     print(f"Spiele '{args.sound}' {args.sound_repeat}x bei Lautstaerke "
           f"{args.sound_volume} ...")
-    play_alert(args.sound, args.sound_repeat, args.sound_volume, args.say or None)
-    notify("netguard", "Testalarm - so sieht der Vorfall aus.")
-    time.sleep(4)
+    procs = play_alert(args.sound, args.sound_repeat, args.sound_volume,
+                       args.say or None)
+    notify("netguard", "Testalarm - so sieht der Vorfall aus.",
+           sound="Basso" if (not args.sound or args.sound.lower() == "none") else None)
+    wait_alert(procs, timeout=60)
+    print("Fertig. Kam auch eine Mitteilung oben rechts an?")
     return 0
 
 
