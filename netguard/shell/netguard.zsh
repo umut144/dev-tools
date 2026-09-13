@@ -66,8 +66,9 @@ HELP
   print "  2. ab ${NETGUARD_S2_MB} MB / ${NETGUARD_WINDOW}s -> Verursacher einfrieren (${NETGUARD_S2_SOUND})"
   print "  3. ab ${NETGUARD_S3_MB} MB / ${NETGUARD_WINDOW}s -> WLAN aus (${NETGUARD_S3_SOUND})"
   print ""
-  print "Eingefrorene Prozesse und ein abgeschaltetes WLAN bleiben so, bis"
-  print "du 'netguard unblock' aufrufst."
+  print "Ein abgeschaltetes Netz bleibt aus, bis 'netguard unblock' kommt."
+  print "Eingefrorene Prozesse laufen weiter, sobald netguard endet (Strg-C)"
+  print "oder du 'netguard unblock' aufrufst."
 }
 
 netguard() {

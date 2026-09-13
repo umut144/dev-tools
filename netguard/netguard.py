@@ -693,14 +693,52 @@ def act_iface_down(ifname, logger):
 
 
 def act_wifi_off(ifname, logger):
-    dev = wifi_device() or ifname
+    """
+    WLAN abschalten. Laeuft der gemessene Verkehr gar nicht ueber das
+    WLAN-Geraet - USB-Hotspot, Ethernet, Thunderbolt-Adapter -, waere das
+    wirkungslos. Dann geht stattdessen das gemessene Interface runter,
+    denn gemeint ist "Netz zu", nicht "WLAN-Schalter umlegen".
+    """
+    dev = wifi_device()
+    if not dev:
+        print("[netguard] kein WLAN-Geraet gefunden - schalte stattdessen "
+              f"{ifname} ab.", file=sys.stderr)
+        return act_iface_down(ifname, logger)
+    if dev != ifname:
+        print(f"[netguard] gemessen wird {ifname}, das WLAN-Geraet ist {dev} - "
+              f"schalte stattdessen {ifname} ab.", file=sys.stderr)
+        return act_iface_down(ifname, logger)
     subprocess.run(["/usr/sbin/networksetup", "-setairportpower", dev, "off"],
                    capture_output=True)
     st = logger.read_state()
     st["wifi_off"] = dev
     st["blocked_at"] = now_iso()
     logger.write_state(st)
-    return [{"wifi": ifname}]
+    return [{"wifi": dev}]
+
+
+def pf_anchor_ready():
+    """
+    Haengt unser Anchor im Haupt-Ruleset? (ok, Grund)
+
+    Ohne einmaliges 'install-pf' - oder nachdem ein macOS-Update
+    /etc/pf.conf ersetzt hat - laedt pfctl die Regeln zwar in den Anchor,
+    ausgewertet werden sie aber nie. Ein still wirkungsloser Kill-Switch
+    ist schlimmer als gar keiner, deshalb wird das vorher geprueft.
+    """
+    try:
+        with open("/etc/pf.conf", encoding="utf-8") as fh:
+            conf = fh.read()
+    except OSError as e:
+        return False, f"/etc/pf.conf nicht lesbar ({e})"
+    if 'anchor "netguard"' not in conf:
+        return False, ("/etc/pf.conf verweist nicht auf den netguard-Anchor - "
+                       "einmalig 'install-pf --yes' ausfuehren")
+    out = run(["/sbin/pfctl", "-s", "Anchors"])
+    if out.strip() and not any(l.strip().endswith("netguard") for l in out.splitlines()):
+        return False, ("Anchor steht in /etc/pf.conf, ist aber nicht geladen - "
+                       "'sudo pfctl -f /etc/pf.conf'")
+    return True, ""
 
 
 def act_pf_block(ifname, logger, flush_states=True):
@@ -712,6 +750,11 @@ def act_pf_block(ifname, logger, flush_states=True):
     Download also auch. Deshalb werden die States geflusht (systemweit;
     andere Verbindungen bauen sich einfach neu auf). --pf-keep-states aus.
     """
+    ready, why = pf_anchor_ready()
+    if not ready:
+        print(f"[netguard] pf nicht einsatzbereit: {why}. "
+              f"Schalte stattdessen {ifname} ab.", file=sys.stderr)
+        return act_iface_down(ifname, logger)
     rules = (
         f"block drop out quick on {ifname} all\n"
         f"block drop in quick on {ifname} all\n"
@@ -1165,8 +1208,21 @@ class Monitor:
             print("=" * 72)
         print(f"netguard {VERSION} - Interface {self.iface}, "
               f"Sample {self.a.interval}s, Fenster {self.a.window}s")
-        for i, s in enumerate(self.stages, 1):
-            print(f"  Stufe {i}: {s.describe()}")
+        for i, stage in enumerate(self.stages, 1):
+            print(f"  Stufe {i}: {stage.describe()}")
+            if self.sim:
+                continue
+            if stage.action == "pf":
+                ok, why = pf_anchor_ready()
+                if not ok:
+                    print(f"           WARNUNG: {why}. Stufe {i} schaltet "
+                          f"ersatzweise {self.iface} ab.")
+            elif stage.action == "wifi":
+                dev = wifi_device()
+                if dev != self.iface:
+                    wo = f", WLAN ist {dev}" if dev else ", kein WLAN-Geraet gefunden"
+                    print(f"           WARNUNG: gemessen wird {self.iface}{wo} - "
+                          f"Stufe {i} schaltet ersatzweise {self.iface} ab.")
         if self.a.daily_mb:
             print(f"  Tageslimit: {self.a.daily_mb:g} MB -> hoechste Stufe")
         print(f"  Logs: {self.log.dir}")

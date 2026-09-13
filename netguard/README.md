@@ -23,7 +23,9 @@ exec zsh
 | `netguard report` | Die letzten Vorfaelle |
 | `netguard sound Basso` | Einen Systemsound probehoeren |
 
-`ng` ist ein Alias fuer `netguard`.
+`ng` ist ein Alias fuer `netguard` - und gleichzeitig das Kommando der
+Angular-CLI. Wer beides braucht, benennt den Alias in `shell/netguard.zsh`
+um.
 
 `netguard` ist eine zsh-Funktion, kein Programm im Pfad: `sudo netguard ...`
 scheitert mit *command not found*, weil sudo keine Shell-Funktionen kennt.
@@ -34,9 +36,9 @@ Die Funktion ruft sudo dort auf, wo es gebraucht wird.
 Gemessen wird in einem gleitenden Fenster von 10 Sekunden:
 
 1. **ab 12 MB** (= 1,2 MB/s anhaltend) - Warnton `Ping`, Mitteilung, sonst nichts
-2. **ab 30 MB** (= 3,0 MB/s) - `Sosumi` dreimal, der groesste Verursacher wird
-   mit `SIGSTOP` eingefroren. Reversibel: `netguard unblock` setzt ihn fort.
-3. **ab 55 MB** (= 5,5 MB/s) - `Submarine` fuenfmal, Sprachansage, WLAN aus.
+2. **ab 30 MB** (= 3,0 MB/s) - `Sosumi` dreimal, der Verursacher wird mit
+   `SIGSTOP` eingefroren. Reversibel: `netguard unblock` setzt ihn fort.
+3. **ab 55 MB** (= 5,5 MB/s) - `Submarine` fuenfmal, Sprachansage, Netz aus.
 
 Die Abstaende zwischen den Stufen (18 und 25 MB) sind mit Absicht groesser
 als der Zuwachs eines Messtakts: geprueft wird erst, wenn ein Sample fertig
@@ -44,28 +46,39 @@ ist, also waechst das Fenster um `Rate x Intervall` auf einmal. Bei Intervall
 2 muesste ein Download schneller als 9 MB/s laufen, damit Stufe 1 gar nicht
 erst zum Zug kommt.
 
+### Wen Stufe 2 anfasst
+
+Nur wer mindestens **20 % des Fenstervolumens** verursacht hat, hoechstens
+drei Prozesse. Der Videocall mit 500 KB bleibt also neben dem 30-MB-Download
+unbehelligt. Traegt niemand so viel bei - Verkehr gleichmaessig auf viele
+Prozesse verteilt -, trifft es den groessten allein, sonst waere die Stufe
+wirkungslos.
+
+Nie angefasst werden netguard selbst, PID 0/1 und die Liste `NEVER_SUSPEND`:
+WindowServer, configd, mDNSResponder, cfprefsd, runningboardd, fileproviderd
+und andere, deren Einfrieren die Oberflaeche oder das Prozessmanagement
+haengen laesst. Weil nettop Prozessnamen auf etwa 15 Zeichen kuerzt, wird
+zusaetzlich per Praefix und gegen den vollen Namen aus `ps` verglichen.
+
+Mit auf der Liste stehen `cloudd` und `bird`, also iCloud. Das ist eine
+bewusste Abwaegung: eine ausser Kontrolle geratene iCloud-Synchronisation
+kann Stufe 2 damit nicht bremsen - dafuer ist Stufe 3 zustaendig. Stufe 1
+nennt den Verursacher trotzdem beim Namen, du kannst also selbst eingreifen.
+
+### Wann es wieder scharf ist
+
 Jede Stufe loest nur einmal aus. Beruhigt sich der Verbrauch fuer die Dauer
-von `--cooldown` (Standard 300 s) unter Stufe 1, ist netguard wieder scharf.
-Geht es so schnell, dass mehrere Schwellen in einem Messtakt fallen, wird nur
-die hoechste erreichte Stufe ausgefuehrt und das im Log vermerkt.
+von `--cooldown` (Standard 300 s) unter Stufe 1, faellt netguard auf Stufe 0
+zurueck. `netguard unblock` wirkt sofort: der laufende Monitor sieht es an
+`state.json` und ist wieder ab Stufe 1 scharf, statt bis zum Ende des
+Cooldowns stumm zu bleiben. Wer nach einem erreichten **Tageslimit**
+entsperrt, will bewusst weitermachen - das Tageslimit ist dann fuer diesen
+Tag ausgesetzt, die Burst-Stufen bleiben aktiv.
 
-Nie eingefroren werden: netguard selbst, PID 0/1 und die Liste in
-`NEVER_SUSPEND` (WindowServer, configd, mDNSResponder, Terminal, sshd, ...).
-Ist der groesste Verursacher geschuetzt, geht netguard die Liste weiter
-runter, statt gar nichts zu tun.
-
-### Die Schwellen im Alltag
-
-| Was | Verbrauch | im 10s-Fenster | Reaktion |
-|---|---|---|---|
-| Spotify | ~0,04 MB/s | 0,4 MB | nichts |
-| Videocall (Zoom/FaceTime) | 0,2-0,4 MB/s | 2-4 MB | nichts |
-| Netflix HD | ~0,6 MB/s | 6 MB | nichts |
-| 4K-Stream | ~2 MB/s | 20 MB | Stufe 1 |
-| Download / Systemupdate | 2-10 MB/s | 20-100 MB | Stufe 1-3 in Sekunden |
-
-Wer die Stufen auf ein 60-Sekunden-Fenster zieht, trifft damit auch normale
-Videocalls. Fenster und Schwellen stehen oben in `shell/netguard.zsh`.
+Beim Beenden (Strg-C oder SIGTERM) werden eingefrorene Prozesse wieder
+fortgesetzt - netguard laesst nichts eingefroren zurueck, wenn es selbst
+nicht mehr da ist. Ein abgeschaltetes Netz und ein pf-Block bleiben dagegen
+bestehen, bis `netguard unblock` kommt (oder `--unblock-on-exit` gesetzt ist).
 
 ## Testlauf
 
@@ -133,3 +146,16 @@ Danach ist `--stage 36:pf` moeglich: blockt alles auf dem Interface ueber die
 pf-Firewall und flusht bestehende Verbindungen, damit ein laufender Download
 wirklich stoppt. `netguard unblock` leert den Anchor und gibt das
 pf-Enable-Token zurueck.
+
+## Zur sudo-Grenze
+
+Der Monitor laeuft als root, das Skript und der benutzte Python-Interpreter
+liegen aber in Benutzerhand. Wer den Benutzeraccount kontrolliert, kann den
+Inhalt von `netguard.py` aendern und bekommt ihn beim naechsten `netguard`
+mit root-Rechten ausgefuehrt - erst recht als LaunchDaemon. Die sudo-Grenze
+ist hier also nominell. Auf einem Einzelplatzgeraet ist das vertretbar; auf
+einem Rechner mit mehreren Benutzern gehoerten Skript und Interpreter in
+root-eigene, nur fuer root beschreibbare Pfade.
+
+Die Logs im Repo-Ordner sind davon nicht betroffen: sie gehoeren dem
+Benutzer, liegen unter 0700 und werden nicht mitversioniert.
