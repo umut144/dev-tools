@@ -820,6 +820,7 @@ class Monitor:
         self.log = Logger(args.logdir)
         self.window = deque()          # (mono_ts, delta_bytes, {proc: bytes})
         self.prev_raw = None
+        self.prev_counters = None      # Interface-Zaehler des vorigen Zyklus
         self.day = datetime.now().strftime("%Y-%m-%d")
         self.day_bytes = 0
         self.level = 0                 # erreichte Warnstufe
@@ -863,11 +864,23 @@ class Monitor:
         st["day"], st["day_bytes"] = self.day, self.day_bytes
         self.log.write_state(st)
 
+    def level_for(self, win):
+        """Hoechste Stufe, die dieses Fenstervolumen erreicht."""
+        lvl = 0
+        for i, stage in enumerate(self.stages):
+            if win >= stage.limit:
+                lvl = i + 1
+        return lvl
+
     def rollover_day(self):
         today = datetime.now().strftime("%Y-%m-%d")
         if today != self.day:
             self.day, self.day_bytes = today, 0
             self.daily_override = False
+            # Die Stufe gehoert zum Fenster, nicht zum Tag. Sie hart auf 0 zu
+            # setzen liess einen Trip kurz vor Mitternacht um 00:00 ein
+            # zweites Mal feuern, weil das Fenster ja noch voll war.
+            self.level = min(self.level, self.level_for(self.window_total()))
             self._persist_day_total()
 
     def maybe_switch_interface(self):
@@ -879,6 +892,7 @@ class Monitor:
             print(f"[netguard] Interface gewechselt: {self.iface} -> {cur}")
             self.iface = cur
             self.nettop_type = self.a.nettop_type or default_nettop_type(cur)
+            self.prev_counters = None   # andere Zaehler, nicht vergleichbar
             self.window.clear()
 
     def check_unblocked(self):
@@ -985,17 +999,22 @@ class Monitor:
             return {"bytes": total, "procs": {(SIM_NAME, os.getpid()): total},
                     "residual": 0, "gap": False, "now": m1, "seconds": m1 - m0}
 
-        # netstat direkt um das nettop-Fenster herum -> gleiche Zeitbasis
-        i0 = iface_counters(self.iface)
         raw, ok = nettop_sample(self.a.interval, self.nettop_type,
                                 delta=(self.mode == "delta"))
         i1 = iface_counters(self.iface)
         m1, w1 = time.monotonic(), time.time()
 
         total = 0
-        if i0 and i1:
-            # negativ = Interface-Reset (down/up) -> ignorieren
-            total = max(0, i1[0] - i0[0]) + max(0, i1[1] - i0[1])
+        if i1 and self.prev_counters:
+            # Gegen den Stand des VORIGEN Zyklus, nicht gegen einen zweiten
+            # Messpunkt innerhalb dieses Zyklus: sonst faellt alles unter den
+            # Tisch, was zwischen zwei nettop-Fenstern durchgeht - im Betrieb
+            # ein bis zwei Prozent, nach einem Vorfall (ps/lsof) mehrere
+            # Sekunden. Negativ = Interface-Reset (down/up) -> ignorieren.
+            total = (max(0, i1[0] - self.prev_counters[0])
+                     + max(0, i1[1] - self.prev_counters[1]))
+        if i1:
+            self.prev_counters = i1
         procs = self.attribute(raw, ok)
         attributed = sum(procs.values())
         self.warn_if_implausible(attributed, total)
@@ -1159,6 +1178,8 @@ class Monitor:
         self.print_header()
         daily_limit = int(self.a.daily_mb * 1024 * 1024) if self.a.daily_mb else 0
         self.install_signal_handlers()
+        if not self.sim:
+            self.prev_counters = iface_counters(self.iface)   # Startwert
         started = time.monotonic()
         last_iface_check = last_persist = last_rotate = 0.0
 
@@ -1209,10 +1230,7 @@ class Monitor:
             # --- Warnstufen pruefen
             daily_hit = bool(daily_limit and not self.daily_override
                              and self.day_bytes >= daily_limit)
-            reached, amount = 0, win
-            for i, stage in enumerate(self.stages):
-                if win >= stage.limit:
-                    reached = i + 1
+            reached, amount = self.level_for(win), win
             if daily_hit and reached < len(self.stages):
                 reached, amount = len(self.stages), self.day_bytes
 
