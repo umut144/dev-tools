@@ -14,13 +14,13 @@ Offene Punkte im Monorepo. Erledigtes fliegt raus, nicht ab.
       leer - und Zeitstempel-Zeilen gibt es nicht, die wiederholte Kopfzeile
       ist die Sample-Grenze. Der Parser verwarf beides und lieferte deshalb
       gar keine Zuordnung. Behoben, Regressionstest gegen die echte Ausgabe.
-- [ ] **Liefert `nettop -d` echte Deltas?** Weiterhin offen: der zweite
-      Block koennte auch nur wieder kumulative Werte enthalten. `netguard
-      top -v` beantwortet das - steht unter "davon zugeordnet" eine Zahl in
-      der Groessenordnung des Interface-Totals, stimmt es; sind es hunderte
-      MB, wird `-d` ignoriert und netguard schaltet selbst auf kumulatives
-      Diffen um. Faellt es dauerhaft auf `diff` zurueck, lohnt sich die
-      Ueberlegung, den Diff-Modus gleich zum Standard zu machen.
+- [x] ~~Liefert `nettop -d` echte Deltas?~~ Ja, auf macOS 26.6 bestaetigt:
+      27,2 KB zugeordnet bei 30,6 KB Interface-Delta ueber 10 s, also rund
+      89 % - kumulative Werte haetten hier hunderte MB ergeben. Der Rest
+      sind ARP, mDNS und anderer Verkehr ohne Socket-Zuordnung. Richtwert
+      fuer spaeter: bleibt `unattributed_bytes` bei nennenswertem Traffic
+      unter etwa einem Viertel und steht `attribution_mode` auf `delta`,
+      arbeitet die Zuordnung korrekt.
 - [ ] **zsh-Integration mit echtem zsh testen.** Die Datei wurde nur
       strukturell geprueft (Klammern, Quotes, case/esac), nie ausgefuehrt -
       in der Entwicklungsumgebung war kein zsh verfuegbar.
