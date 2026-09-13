@@ -83,12 +83,21 @@ Unterverzeichnis, damit das gezaehlte Tagesvolumen unberuehrt bleibt. Mit
 
 ## Logs
 
-Standard `/var/log/netguard` (Rechte 0700, enthaelt vollstaendige
-Kommandozeilen):
+Liegen in `netguard/logs/` direkt im Repo (Rechte 0700):
 
 * `samples.jsonl` - Messpunkte oberhalb des Rauschbodens
 * `incidents.jsonl` - Vorfaelle samt Verursacher und Zielen
 * `state.json` - was gerade gesperrt ist, Tagesvolumen
+* `simulation/` - dasselbe fuer Testlaeufe, getrennt gehalten
+
+Der Inhalt ist per `.gitignore` ausgeschlossen und sollte es bleiben: die
+Vorfaelle enthalten vollstaendige Kommandozeilen, und in denen stehen gern
+mal Tokens oder interne URLs. Laeuft der Monitor unter `sudo`, werden neu
+angelegte Dateien an den aufrufenden Benutzer zurueckgegeben - sonst
+gehoerten sie root und waeren in einem 0700-Verzeichnis fuer dich selbst
+nicht mehr lesbar.
+
+Rotiert wird bei 50 MB je Datei, drei Generationen (`.1` bis `.3`).
 
 ## Dauerbetrieb
 

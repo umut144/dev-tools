@@ -1,0 +1,4 @@
+# Platzhalter, damit der Ordner im Repo existiert.
+# Der Inhalt (samples.jsonl, incidents.jsonl, state.json, simulation/)
+# wird von .gitignore ausgeschlossen - er enthaelt vollstaendige
+# Kommandozeilen und damit potenziell Tokens aus URLs.

@@ -1,6 +1,10 @@
 .DS_Store
 __pycache__/
 *.py[cod]
-*.log
+*.venv/
+
+# Logs bleiben lokal: sie enthalten vollstaendige Kommandozeilen
+netguard/logs/*
+!netguard/logs/.gitkeep
 *.jsonl
-.venv/
+*.log

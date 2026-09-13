@@ -419,6 +419,23 @@ def proc_start_key(pid):
 # ---------------------------------------------------------------- Logging
 
 
+def _chown_to_invoker(path):
+    """
+    Laeuft netguard unter sudo, gehoerten neue Logdateien sonst root - und der
+    eigentliche Benutzer kaeme an sein eigenes Logverzeichnis (0700) nicht mehr
+    heran. Deshalb zurueck an den User, der sudo aufgerufen hat.
+    """
+    if os.geteuid() != 0:
+        return
+    uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
+    if not (uid and uid.isdigit()):
+        return
+    try:
+        os.chown(path, int(uid), int(gid) if gid and gid.isdigit() else -1)
+    except OSError:
+        pass
+
+
 class Logger:
     def __init__(self, logdir):
         self.dir = logdir
@@ -427,16 +444,20 @@ class Logger:
             os.chmod(self.dir, 0o700)   # Logs enthalten komplette Kommandozeilen
         except OSError:
             pass
+        _chown_to_invoker(self.dir)
         self.samples = os.path.join(self.dir, "samples.jsonl")
         self.incidents = os.path.join(self.dir, "incidents.jsonl")
         self.state_file = os.path.join(self.dir, "state.json")
 
     def _append(self, path, obj):
+        is_new = not os.path.exists(path)
         try:
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
                 fh.flush()
                 os.fsync(fh.fileno())   # damit nach einem Hard-Cut nichts fehlt
+            if is_new:
+                _chown_to_invoker(path)
         except OSError as e:
             print(f"[netguard] Log-Fehler {path}: {e}", file=sys.stderr)
 
@@ -462,6 +483,9 @@ class Logger:
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, self.state_file)
+            # os.replace legt eine neue Datei an - der Besitzer faellt sonst
+            # bei jedem Schreiben auf root zurueck, nicht nur beim ersten Mal.
+            _chown_to_invoker(self.state_file)
         except OSError:
             pass
 

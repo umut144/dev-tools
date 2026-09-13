@@ -25,8 +25,8 @@ if [[ -z ${NETGUARD_HOME:-} ]]; then
   unset _netguard_src
 fi
 : "${NETGUARD_PY:=$(command -v python3 || echo /usr/bin/python3)}"
-: "${NETGUARD_LOGDIR:=/var/log/netguard}"                # Monitor laeuft als root
-: "${NETGUARD_SIM_LOGDIR:=$HOME/Library/Logs/netguard}"  # Testlauf ohne sudo
+: "${NETGUARD_LOGDIR:=$NETGUARD_HOME/logs}"   # Logs liegen im Repo-Ordner
+                                            # (Testlaeufe darunter in simulation/)
 
 # --- feste Werte: hier aendern ---------------------------------------------
 : ${NETGUARD_WINDOW:=10}        # Messfenster in Sekunden
@@ -95,7 +95,7 @@ netguard() {
     test|sim)
       local rate=4
       if [[ -n $1 && $1 == [0-9]* ]]; then rate=$1; shift; fi
-      "$NETGUARD_PY" "$script" --logdir "$NETGUARD_SIM_LOGDIR" monitor \
+      "$NETGUARD_PY" "$script" --logdir "$NETGUARD_LOGDIR" monitor \
            "${base[@]}" --interval 1 --simulate "$rate" -v "$@"
       ;;
     sound)
