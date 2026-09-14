@@ -17,11 +17,6 @@ Stand nach dem externen Review. Behobenes steht unten.
       das pf.conf ersetzt. Muss auf dem Geraet geprueft werden, bevor es
       eingebaut wird; die aktuelle Fassung meldet immerhin, wenn der Anchor
       nicht haengt, und schaltet ersatzweise das Interface ab.
-- [ ] **Mitteilung unter sudo pruefen.** Der Weg ueber
-      `launchctl asuser <uid> sudo -u <user> osascript` ist nie beobachtet
-      worden. Einmal `sudo python3 ~/Desktop/dev-tools/netguard/netguard.py
-      testsound` ausfuehren (voller Pfad, sonst "command not found") und
-      schauen, ob Ton und Mitteilung ankommen.
 - [ ] **iCloud gezielt behandeln.** `cloudd` und `bird` stehen jetzt in
       `NEVER_SUSPEND`, weil ihr Einfrieren Finder und Dateianbieter haengen
       lassen kann. Damit kann Stufe 2 gegen eine ausser Kontrolle geratene
@@ -51,6 +46,12 @@ Stand nach dem externen Review. Behobenes steht unten.
       Interface-Delta ueber 10 s. Richtwert: bleibt `unattributed_bytes`
       bei nennenswertem Traffic unter etwa einem Viertel, arbeitet die
       Zuordnung korrekt.
+- [x] Alarm unter sudo bestaetigt: der Weg ueber
+      `launchctl asuser <uid> sudo -u <user>` liefert Ton und Mitteilung -
+      geprueft mit `testsound` und ueber alle drei Stufen im Testlauf. Dazu
+      behoben, dass die Tonkette vorzeitig abbrach, die Mitteilung ihren
+      eigenen Ton darueberlegte und die Ansage in die Toene hineinsprach
+      (f358906).
 - [x] zsh-Integration im Alltag bestaetigt. Merke: `sudo netguard` scheitert,
       weil sudo keine Shell-Funktionen kennt - die Funktion ruft sudo selbst.
 - [x] Review-Punkte 1 bis 10 abgearbeitet (6bbdc18, 76ff107 und der
