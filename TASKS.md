@@ -38,6 +38,22 @@ Stand nach dem externen Review. Behobenes steht unten.
 
 ### Erledigt
 
+- [x] **SIGHUP abgefangen.** Bisher hoerte netguard nur auf SIGTERM/
+      SIGINT, um angehaltene Prozesse beim Beenden wieder freizugeben.
+      Schliesst man aber das Terminal-Fenster/Tab, in dem netguard
+      laeuft, schicken Terminal.app/iTerm dabei ueblicherweise SIGHUP an
+      die Prozessgruppe - ohne eigenen Handler beendet Python den
+      Prozess sofort und OHNE cleanup(), eingefrorene (SIGSTOP)
+      Prozesse waeren dann dauerhaft haengen geblieben, bis sie manuell
+      per `kill -CONT` befreit werden. Anlass: nach einem Stufe-2-Trip
+      gegen PasswordBreachAgent stand in state.json weiterhin ein
+      `suspended`-Eintrag ohne `unblocked_at`, obwohl `ng unblock` nicht
+      gelaufen war - ob der Prozess auf dem Geraet tatsaechlich noch
+      angehalten war, liess sich von hier aus nicht pruefen (kein
+      Zugriff auf die echte Mac-Prozessliste), aber die Luecke im Code
+      war unabhaengig davon real. SIGHUP ist jetzt Teil der
+      abgefangenen Signale.
+
 - [x] nettop-Ausgabe auf echter Hardware geprueft: Kopfzeile
       `,bytes_in,bytes_out,` mit leerem erstem Feld, keine Zeitstempel-
       Zeilen, die wiederholte Kopfzeile ist die Sample-Grenze. Parser

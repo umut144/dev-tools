@@ -1205,10 +1205,15 @@ class Monitor:
         def handler(signum, _frame):
             self.stop_requested = True
             self.cleanup(signum)
-        for sig in (signal.SIGTERM, signal.SIGINT):
+        # SIGHUP zusaetzlich zu SIGTERM/SIGINT abfangen: schliesst man das
+        # Terminal-Fenster/Tab, in dem netguard laeuft, schickt Terminal.app
+        # bzw. iTerm meist SIGHUP an die Prozessgruppe. Ohne diesen Handler
+        # wuerde Python sofort beenden OHNE cleanup() - eingefrorene
+        # (SIGSTOP) Prozesse blieben dann dauerhaft haengen.
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             try:
                 signal.signal(sig, handler)
-            except (ValueError, OSError):
+            except (ValueError, OSError, AttributeError):
                 pass
 
     def cleanup(self, signum=None):
