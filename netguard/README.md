@@ -24,7 +24,9 @@ exec zsh
 | `netguard sound Basso` | Einen Systemsound probehoeren |
 | `netguard daemon` | Als LaunchDaemon installieren/aktualisieren (Dauerbetrieb, siehe unten) |
 | `netguard daemon-status` | Laeuft der Daemon gerade? |
-| `netguard daemon-off` | Daemon stoppen |
+| `netguard daemon-log` | Live mitlesen wie bei `netguard` im Terminal |
+| `netguard daemon-errors` | Fehlerausgabe des Daemons (Abstuerze, Tracebacks) |
+| `netguard daemon-off` | Daemon stoppen (dauerhaft, siehe unten) |
 
 `ng` ist ein Alias fuer `netguard` - und gleichzeitig das Kommando der
 Angular-CLI. Wer beides braucht, benennt den Alias in `shell/netguard.zsh`
@@ -167,9 +169,49 @@ Hand geht weiterhin, etwa fuer eine abweichende Konfiguration ausserhalb der
 zsh-Defaults - `netguard daemon` ist nur der bequeme Weg mit den aktuellen
 Werten.
 
-Laeuft der Daemon dauerhaft, ist ein zusaetzliches `netguard` (bzw. `ng`,
-ohne Subkommando) im Terminal unnoetig: beide wuerden unabhaengig voneinander
-denselben Traffic messen und im Zweifel doppelt eskalieren.
+Laeuft der Daemon dauerhaft, sollte kein zusaetzliches `netguard` (bzw. `ng`,
+ohne Subkommando) im Terminal parallel laufen: beide schreiben unabhaengig
+voneinander in dieselbe `state.json` (insbesondere das Tagesvolumen
+`day_bytes`) und lesen sich dabei nicht gegenseitig - der zuletzt
+schreibende Prozess gewinnt, das Tagesvolumen wird also nicht addiert,
+sondern verfaelscht. Ausserdem wuerden beide unabhaengig voneinander
+denselben Traffic messen und im Zweifel doppelt eskalieren (zwei
+ueberlagerte Alarme etc.). `status`/`unblock`/`report`/`test` sind davon
+nicht betroffen und bleiben normal nutzbar.
+
+Live mitlesen, was der Daemon gerade sieht - dasselbe Format wie `netguard`
+im Terminal, weil `-v` mit in den Plist geschrieben wird:
+
+```sh
+netguard daemon-log       # wie 'netguard', nur vom Daemon statt vom Terminal
+netguard daemon-errors    # falls der Daemon nicht anspringt: Tracebacks hier
+```
+
+### Bekannte Stolperfalle: Desktop-Pfad + Full Disk Access
+
+Liegt das Repo unter `~/Desktop/...` (wie hier per Default), scheitert der
+Daemon beim Start mit `Operation not permitted` beim Oeffnen von
+`netguard.py` - sichtbar in `netguard daemon-errors`, `daemon-status` zeigt
+dann dauerhaft `active count = 0` / `spawn scheduled` (launchd startet ihn
+alle `ThrottleInterval`-Sekunden neu und scheitert wieder). Grund: seit
+macOS 10.15.4 gilt TCC (Full Disk Access) auch fuer root-Prozesse - ein
+LaunchDaemon darf ohne explizite Freigabe nicht in Desktop/Dokumente/
+Downloads lesen, ein `sudo` aus dem Terminal dagegen schon (Terminal.app
+hat die Freigabe meist laengst, und die vererbt sich an Kindprozesse).
+
+Zwei Wege, das zu beheben:
+
+1. **Empfohlen - Repo aus dem TCC-geschuetzten Ordner verschieben**, z. B.
+   nach `~/dev-tools` (direkt im Home-Verzeichnis, nicht unter Desktop/
+   Dokumente/Downloads). Danach in `~/.zshrc` den `source`-Pfad anpassen
+   und `netguard daemon` neu ausfuehren. Kein Full-Disk-Access-Grant noetig.
+2. **Alternativ - Full Disk Access fuer den Python-Interpreter erteilen**:
+   Systemeinstellungen -> Datenschutz & Sicherheit -> Vollstaendiger
+   Festplattenzugriff -> `+` -> exakt den Pfad aus `program =` in `netguard daemon-status`
+   hinzufuegen (z. B. `/Library/Frameworks/Python.framework/Versions/3.14/
+   Resources/Python.app`). Nachteil: das gilt fuer diesen Python-Interpreter
+   insgesamt, nicht nur fuer netguard - eine deutlich groessere Freigabe als
+   noetig.
 
 ## Optional: pf-Kill-Switch
 

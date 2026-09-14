@@ -34,6 +34,17 @@ Stand nach dem externen Review. Behobenes steht unten.
       Monatstarif braeuchte es einen Monatszaehler mit konfigurierbarem
       Abrechnungstag.
 
+- [ ] **Daemon scheitert aktuell an TCC/Full Disk Access.** Repo liegt
+      unter ~/Desktop - ein LaunchDaemon (root, ohne Terminal-Kontext)
+      darf da seit macOS 10.15.4 ohne explizite Freigabe nicht lesen
+      ("Operation not permitted", siehe netguard.err.log). Empfohlener
+      Fix: Repo nach ~/dev-tools verschieben (ausserhalb Desktop/
+      Dokumente/Downloads), .zshrc-Pfad anpassen, `netguard daemon`
+      neu ausfuehren. Alternativ Full Disk Access fuer den konkreten
+      Python-Interpreter erteilen (breiter als noetig). Braucht eine
+      manuelle Aktion des Users - laesst sich nicht per Code loesen.
+      Details in README ("Bekannte Stolperfalle").
+
 ### Erledigt
 
 - [x] **daemon-off war nicht dauerhaft.** `launchctl bootout` stoppt nur

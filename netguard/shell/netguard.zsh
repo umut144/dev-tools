@@ -59,8 +59,10 @@ netguard - Datenverbrauch ueberwachen und stufenweise bremsen
                           laeuft ab jetzt bei jedem Systemstart im
                           Hintergrund, auch ohne offenes Terminal
   netguard daemon-status  Laeuft der Daemon gerade?
-  netguard daemon-off     Daemon stoppen (startet nicht mehr automatisch,
-                          bis 'netguard daemon' erneut kommt)
+  netguard daemon-log     Live mitlesen, wie bei 'netguard' im Terminal
+  netguard daemon-errors  Fehlerausgabe des Daemons (Abstuerze, Tracebacks)
+  netguard daemon-off     Daemon stoppen (bleibt auch nach einem Neustart
+                          aus, bis 'netguard daemon' erneut kommt)
   netguard help           Diese Hilfe
 
 netguard ruft sudo selbst auf. 'sudo netguard ...' schlaegt fehl, weil sudo
@@ -127,6 +129,13 @@ netguard() {
       ;;
     daemon-status)
       sudo /bin/launchctl print system/local.netguard 2>&1 | head -25
+      ;;
+    daemon-log|daemon-tail)
+      print "Live-Ausgabe des Daemons (wie 'netguard' im Terminal) - Strg-C beendet nur das Mitlesen, nicht den Daemon:"
+      tail -n 20 -f "$NETGUARD_LOGDIR/netguard.out.log"
+      ;;
+    daemon-errors)
+      tail -n 50 "$NETGUARD_LOGDIR/netguard.err.log"
       ;;
     daemon-off|daemon-uninstall|daemon-stop)
       # bootout allein reicht nicht: das Plist liegt weiter in
