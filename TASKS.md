@@ -34,18 +34,28 @@ Stand nach dem externen Review. Behobenes steht unten.
       Monatstarif braeuchte es einen Monatszaehler mit konfigurierbarem
       Abrechnungstag.
 
-- [ ] **Daemon scheitert aktuell an TCC/Full Disk Access.** Repo liegt
-      unter ~/Desktop - ein LaunchDaemon (root, ohne Terminal-Kontext)
-      darf da seit macOS 10.15.4 ohne explizite Freigabe nicht lesen
-      ("Operation not permitted", siehe netguard.err.log). Empfohlener
-      Fix: Repo nach ~/dev-tools verschieben (ausserhalb Desktop/
-      Dokumente/Downloads), .zshrc-Pfad anpassen, `netguard daemon`
-      neu ausfuehren. Alternativ Full Disk Access fuer den konkreten
-      Python-Interpreter erteilen (breiter als noetig). Braucht eine
-      manuelle Aktion des Users - laesst sich nicht per Code loesen.
-      Details in README ("Bekannte Stolperfalle").
+- [ ] **Daemon: TCC/Full-Disk-Access-Problem bleibt ungeloest, aber erstmal
+      nicht verfolgt.** Repo liegt unter ~/Desktop - ein LaunchDaemon (root,
+      ohne Terminal-Kontext) darf da seit macOS 10.15.4 ohne explizite
+      Freigabe nicht lesen ("Operation not permitted", siehe
+      netguard.err.log). Fix waere entweder das Repo aus Desktop/Dokumente/
+      Downloads zu verschieben oder Full Disk Access fuer den Python-
+      Interpreter zu erteilen (Details in README, "Bekannte Stolperfalle").
+      Der Nutzer hat sich stattdessen bewusst fuer reinen Terminalbetrieb
+      entschieden - der Daemon wird deinstalliert (`netguard
+      daemon-uninstall`). Diese Notiz bleibt fuer den Fall, dass das Thema
+      spaeter nochmal aufkommt.
 
 ### Erledigt
+
+- [x] **Start-Rueckblick.** `netguard` (Terminal) zeigt beim Start jetzt
+      automatisch, ob noch etwas aus einem frueheren Lauf gesperrt ist
+      (inkl. angehaltener Prozesse) und was der letzte protokollierte
+      Vorfall war - ohne dass extra `netguard status`/`report`
+      noetig ist. Anlass: Wunsch nach 'persistenter Speicherung, in
+      JSON, menschenlesbar, beim Start geladen' - state.json/
+      incidents.jsonl gab es dafuer schon, es wurde nur nirgends von
+      selbst angezeigt.
 
 - [x] **daemon-off war nicht dauerhaft.** `launchctl bootout` stoppt nur
       die laufende Instanz - das Plist bleibt in /Library/LaunchDaemons

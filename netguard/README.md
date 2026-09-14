@@ -27,6 +27,7 @@ exec zsh
 | `netguard daemon-log` | Live mitlesen wie bei `netguard` im Terminal |
 | `netguard daemon-errors` | Fehlerausgabe des Daemons (Abstuerze, Tracebacks) |
 | `netguard daemon-off` | Daemon stoppen (dauerhaft, siehe unten) |
+| `netguard daemon-uninstall` | Daemon komplett entfernen (Plist geloescht) |
 
 `ng` ist ein Alias fuer `netguard` - und gleichzeitig das Kommando der
 Angular-CLI. Wer beides braucht, benennt den Alias in `shell/netguard.zsh`
@@ -85,6 +86,23 @@ geschlossen wird) werden eingefrorene Prozesse wieder fortgesetzt - netguard
 laesst nichts eingefroren zurueck, wenn es selbst nicht mehr da ist. Ein
 abgeschaltetes Netz und ein pf-Block bleiben dagegen bestehen, bis
 `netguard unblock` kommt (oder `--unblock-on-exit` gesetzt ist).
+
+## Persistenz - was ueberlebt einen Neustart von netguard
+
+Nichts davon braucht einen Hintergrunddienst: `state.json` und
+`incidents.jsonl` liegen so oder so in `netguard/logs/` und ueberleben jedes
+Beenden und jeden Neustart von netguard selbst - der Hintergrunddienst
+(`netguard daemon`, siehe unten) haette daran nichts geaendert, er haette
+nur zusaetzlich dafuer gesorgt, dass ueberhaupt *gemessen* wird, auch ohne
+offenes Terminal.
+
+Startest du `netguard` neu, zeigt es jetzt von selbst einen kurzen
+Rueckblick: ob noch etwas gesperrt ist (samt angehaltener Prozesse) und was
+der letzte protokollierte Vorfall war - ohne dass du extra `netguard
+status`/`netguard report` aufrufen musst (die bleiben fuer die volle Liste
+bzw. Details natuerlich trotzdem da). Alles menschenlesbar in
+`incidents.jsonl` (ein JSON-Objekt pro Zeile, mit `netguard report`
+zusammengefasst) und `state.json` (aktueller Sperrzustand).
 
 ## Testlauf
 

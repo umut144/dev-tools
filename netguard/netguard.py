@@ -926,6 +926,7 @@ class Monitor:
         self.alert_procs = []
         self.stages = self._build_stages()
         self._restore_day_total()
+        self._startup_recap()
 
     def _build_stages(self):
         """--stage ... wenn angegeben, sonst eine einzelne Stufe aus --burst-mb."""
@@ -946,6 +947,34 @@ class Monitor:
             self.day_bytes = int(st.get("day_bytes", 0))
             if self.day_bytes:
                 print(f"[netguard] heute bereits gezaehlt: {human(self.day_bytes)}")
+
+    def _startup_recap(self):
+        """
+        Kurzer, menschenlesbarer Rueckblick beim Start: was aus einem
+        frueheren Lauf noch offen ist (state.json) und was zuletzt passiert
+        ist (incidents.jsonl). Beides stand vorher nur in den Logdateien -
+        jetzt auch direkt beim Start sichtbar, ohne extra 'netguard status'
+        oder 'netguard report'.
+        """
+        st = self.log.read_state()
+        if st.get("blocked_at"):
+            print(f"[netguard] noch gesperrt seit {st['blocked_at']} "
+                  "(Details: netguard status):")
+            for k in ("iface_down", "wifi_off", "pf_blocked"):
+                if st.get(k):
+                    print(f"  {k}: {st[k]}")
+            for p in st.get("suspended", []):
+                print(f"  angehalten: {p['name']}.{p['pid']}")
+        if os.path.exists(self.log.incidents):
+            try:
+                with open(self.log.incidents, encoding="utf-8") as fh:
+                    last = deque(fh, maxlen=1)
+                if last:
+                    inc = json.loads(last[0])
+                    print(f"[netguard] letzter Vorfall: {inc.get('human', '?')} "
+                          f"am {inc.get('ts', '?')} (alle: netguard report)")
+            except (OSError, ValueError):
+                pass
 
     def _persist_day_total(self):
         st = self.log.read_state()

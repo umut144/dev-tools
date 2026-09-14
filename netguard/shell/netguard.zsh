@@ -63,6 +63,7 @@ netguard - Datenverbrauch ueberwachen und stufenweise bremsen
   netguard daemon-errors  Fehlerausgabe des Daemons (Abstuerze, Tracebacks)
   netguard daemon-off     Daemon stoppen (bleibt auch nach einem Neustart
                           aus, bis 'netguard daemon' erneut kommt)
+  netguard daemon-uninstall  Daemon komplett entfernen (Plist geloescht)
   netguard help           Diese Hilfe
 
 netguard ruft sudo selbst auf. 'sudo netguard ...' schlaegt fehl, weil sudo
@@ -137,7 +138,7 @@ netguard() {
     daemon-errors)
       tail -n 50 "$NETGUARD_LOGDIR/netguard.err.log"
       ;;
-    daemon-off|daemon-uninstall|daemon-stop)
+    daemon-off|daemon-stop)
       # bootout allein reicht nicht: das Plist liegt weiter in
       # /Library/LaunchDaemons, und launchd laedt bei jedem Boot automatisch
       # alles dort - ohne "disable" waere der Daemon nach einem Neustart
@@ -145,6 +146,12 @@ netguard() {
       sudo /bin/launchctl bootout system /Library/LaunchDaemons/local.netguard.plist 2>&1
       sudo /bin/launchctl disable system/local.netguard 2>&1
       print "LaunchDaemon gestoppt - bleibt auch nach einem Neustart aus. 'netguard daemon' aktiviert und startet ihn wieder."
+      ;;
+    daemon-uninstall)
+      sudo /bin/launchctl bootout system /Library/LaunchDaemons/local.netguard.plist 2>&1
+      sudo /bin/launchctl disable system/local.netguard 2>&1
+      sudo /bin/rm -f /Library/LaunchDaemons/local.netguard.plist
+      print "LaunchDaemon komplett entfernt (Plist geloescht). 'netguard daemon' legt ihn bei Bedarf neu an."
       ;;
     help|-h|--help)
       _netguard_help
