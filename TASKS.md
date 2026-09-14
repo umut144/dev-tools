@@ -48,6 +48,13 @@ Stand nach dem externen Review. Behobenes steht unten.
 
 ### Erledigt
 
+- [x] **Claude/Claude Helper vor Stufe 2/3 geschuetzt.** Ausgeloest
+      durch einen echten Stufe-1-Trip: ein Claude-Helper-Burst (12.9 MB
+      in 10s) in einer bildlastigen Design-Session. Waere das bis
+      Stufe 2 gelaufen, haette netguard den Prozess eingefroren, der
+      gerade die eigene Claude-Session traegt. Jetzt in NEVER_SUSPEND,
+      analog zu Terminal/iTerm2. Stufe 1 (Ton) bleibt aktiv.
+
 - [x] **Start-Rueckblick.** `netguard` (Terminal) zeigt beim Start jetzt
       automatisch, ob noch etwas aus einem frueheren Lauf gesperrt ist
       (inkl. angehaltener Prozesse) und was der letzte protokollierte

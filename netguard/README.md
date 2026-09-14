@@ -71,6 +71,11 @@ bewusste Abwaegung: eine ausser Kontrolle geratene iCloud-Synchronisation
 kann Stufe 2 damit nicht bremsen - dafuer ist Stufe 3 zustaendig. Stufe 1
 nennt den Verursacher trotzdem beim Namen, du kannst also selbst eingreifen.
 
+Ebenfalls geschuetzt: `Claude` und die `Claude Helper*`-Prozesse - aus
+demselben Grund wie `Terminal`/`iTerm2` weiter oben. Sonst koennte Stufe 2
+ausgerechnet den Prozess einfrieren, ueber den du gerade mit Claude
+sprichst (und der auch netguard selbst gebaut hat). Stufe 1 warnt trotzdem.
+
 ### Wann es wieder scharf ist
 
 Jede Stufe loest nur einmal aus. Beruhigt sich der Verbrauch fuer die Dauer

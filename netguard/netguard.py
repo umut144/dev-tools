@@ -92,6 +92,12 @@ NEVER_SUSPEND = {
     # zustaendig. Siehe TASKS.md.
     "cfprefsd", "runningboardd", "fileproviderd", "softwareupdated",
     "Dock", "cloudd", "bird",
+    # Claude selbst: wie bei Terminal/iTerm2 oben - der Prozess, ueber den
+    # du gerade mit Claude sprichst (inkl. der Session, die netguard baut),
+    # soll Stufe 2/3 nicht mittendrin einfrieren koennen. Stufe 1 (Ton)
+    # bleibt aktiv, du merkst es also weiterhin.
+    "Claude", "Claude Helper", "Claude Helper (Renderer)",
+    "Claude Helper (GPU)", "Claude Helper (Plugin)",
 }
 
 # Ab diesem Anteil am Fenstervolumen gilt ein Prozess als Verursacher.
