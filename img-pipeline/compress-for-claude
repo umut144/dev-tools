@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
 """
-compress-for-claude - Bilder verkleinern/komprimieren, bevor sie einer
-Claude-Session vorgelegt werden (z.B. Referenzbilder, Screenshots, Karten-
-Mockups). Nutzt ausschliesslich `sips` (in macOS eingebaut) - keine
-Abhaengigkeiten, kein pip/brew noetig.
+compressimgs - Bilder verkleinern/komprimieren, bevor sie einer Claude-
+Session vorgelegt werden. Nutzt ausschliesslich `sips` (in macOS eingebaut)
+- keine Abhaengigkeiten, kein pip/brew noetig.
 
-Sicherheitsprinzip: das Original wird NIE angefasst. Jede Ausgabe landet in
-einem separaten Ordner (Default: "compressed/" neben dem ersten Bild).
+Ohne Argumente: durchsucht das AKTUELLE Verzeichnis rekursiv (alle
+Unterordner) nach .jpg/.jpeg/.png und legt neben jedem Original eine
+komprimierte Kopie mit "_compressed" im Namen an, z.B.:
+    karte_drache.png  ->  karte_drache_compressed.png
+Originale werden nie angefasst. Schon komprimierte Dateien (erkannt am
+"_compressed"-Suffix) werden nie als Quelle behandelt, und eine bereits
+vorhandene, aktuelle _compressed-Datei wird nicht neu erzeugt (Zeitstempel-
+Vergleich) - erneutes Aufrufen im selben Ordner ist also guenstig.
+
+Mit expliziten Dateien als Argumente: nur diese verarbeiten, keine
+Rekursion.
 
 Beispiele:
-  compress-for-claude karte_drache.png
-  compress-for-claude --max-dim 1600 --quality 80 referenzen/*.jpg
-  compress-for-claude --out-dir ~/Desktop/game04/fuer-claude *.png
-
-Verhalten je Format:
-  PNG   -> bleibt PNG, nur verkleinert (verlustfrei in der Bildqualitaet,
-           behaelt Transparenz). --force-jpeg erzwingt trotzdem JPEG.
-  JPEG/HEIC/TIFF/BMP/GIF -> verkleinert UND mit --quality neu komprimiert
-           (als JPEG ausgegeben).
+  compressimgs                          # alles unter dem aktuellen Ordner
+  compressimgs --max-dim 1600 --quality 80
+  compressimgs karte_drache.png         # nur eine Datei
+  compressimgs --root reference_drawings
+  compressimgs --redo                   # bestehende _compressed-Dateien neu erzeugen
 
 Falls die numerische --quality auf deiner macOS-Version von sips nicht
-angenommen wird (manche Quellen dokumentieren stattdessen nur
-low/normal/high/best/default), einfach ein Schluesselwort statt einer Zahl
-uebergeben, z.B. --quality high. Das Skript meldet einen sips-Fehler klar
-im Terminal, statt still eine kaputte/fehlende Datei zu erzeugen.
+angenommen wird (manche Quellen dokumentieren nur low/normal/high/best/
+default statt einer Zahl), ein Schluesselwort statt einer Zahl uebergeben,
+z.B. --quality high. Ein sips-Fehler wird klar angezeigt, es entsteht nie
+still eine kaputte oder fehlende Datei.
 """
 import argparse
 import os
@@ -31,7 +35,10 @@ import subprocess
 import sys
 
 SIPS = "/usr/bin/sips"
-LOSSY_INPUT_EXT = {".jpg", ".jpeg", ".heic", ".heif", ".tiff", ".tif", ".bmp", ".gif"}
+IMAGE_EXT = {".jpg", ".jpeg", ".png"}
+SUFFIX = "_compressed"
+EXCLUDE_DIRS = {".git", "target", "node_modules", "__pycache__",
+                ".venv", "venv", ".agent-check"}
 
 
 def human(n):
@@ -43,19 +50,40 @@ def human(n):
     return f"{n:.1f} GB"
 
 
-def compress_one(src, out_dir, max_dim, quality, force_jpeg):
-    if not os.path.isfile(src):
-        print(f"  uebersprungen (keine Datei): {src}", file=sys.stderr)
-        return None
+def is_already_compressed(path):
+    stem = os.path.splitext(os.path.basename(path))[0]
+    return stem.endswith(SUFFIX)
 
+
+def find_recursive(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        for fn in sorted(filenames):
+            ext = os.path.splitext(fn)[1].lower()
+            if ext in IMAGE_EXT and not is_already_compressed(fn):
+                yield os.path.join(dirpath, fn)
+
+
+def dest_for(src, to_jpeg):
+    d = os.path.dirname(src)
+    stem, ext = os.path.splitext(os.path.basename(src))
+    out_ext = ".jpg" if to_jpeg else ext
+    return os.path.join(d, f"{stem}{SUFFIX}{out_ext}")
+
+
+def compress_one(src, max_dim, quality, force_jpeg, redo):
     ext = os.path.splitext(src)[1].lower()
-    base = os.path.splitext(os.path.basename(src))[0]
+    to_jpeg = force_jpeg or ext in (".jpg", ".jpeg")
+    dst = dest_for(src, to_jpeg)
+
+    if os.path.exists(dst) and not redo:
+        try:
+            if os.path.getmtime(dst) >= os.path.getmtime(src):
+                return "skip", dst, None
+        except OSError:
+            pass
+
     orig_size = os.path.getsize(src)
-
-    to_jpeg = force_jpeg or ext in LOSSY_INPUT_EXT
-    out_ext = ".jpg" if to_jpeg else (ext or ".png")
-    dst = os.path.join(out_dir, base + out_ext)
-
     cmd = [SIPS, "-Z", str(max_dim)]
     if to_jpeg:
         cmd += ["-s", "format", "jpeg", "-s", "formatOptions", str(quality)]
@@ -63,33 +91,32 @@ def compress_one(src, out_dir, max_dim, quality, force_jpeg):
 
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0 or not os.path.exists(dst):
-        print(f"  FEHLER bei {os.path.basename(src)}: "
-              f"{(r.stderr or r.stdout).strip()}", file=sys.stderr)
-        return None
+        return "error", (r.stderr or r.stdout).strip(), None
 
     new_size = os.path.getsize(dst)
-    saved = 100 * (1 - new_size / orig_size) if orig_size else 0
-    print(f"  {os.path.basename(src):<40} {human(orig_size):>9} -> "
-          f"{human(new_size):>9}  ({saved:4.0f}% kleiner)")
-    return orig_size, new_size
+    return "ok", orig_size, new_size
 
 
 def main():
     ap = argparse.ArgumentParser(
         description="Bilder fuer Claude verkleinern/komprimieren (sips, "
                      "keine Abhaengigkeiten). Ueberschreibt nie Originale.")
-    ap.add_argument("images", nargs="+", help="Bilddateien (Pfade oder Glob)")
+    ap.add_argument("images", nargs="*",
+                     help="bestimmte Bilddateien statt rekursivem Scan")
+    ap.add_argument("--root", default=".",
+                     help="Wurzelordner fuer den rekursiven Scan, Default: "
+                          "aktuelles Verzeichnis")
     ap.add_argument("--max-dim", type=int, default=2048,
                      help="laengste Kante in Pixeln, Default 2048")
     ap.add_argument("--quality", default="82",
                      help="JPEG-Qualitaet: Zahl 0-100 ODER low/normal/high/"
-                          "best/default, je nachdem was deine sips-Version "
-                          "annimmt. Default 82")
-    ap.add_argument("--out-dir", default=None,
-                     help="Zielordner, Default: <erstes Bild>/compressed")
+                          "best/default. Default 82")
     ap.add_argument("--force-jpeg", action="store_true",
                      help="auch PNGs verlustbehaftet zu JPEG wandeln - "
                           "kleiner, aber keine Transparenz mehr")
+    ap.add_argument("--redo", action="store_true",
+                     help="bestehende _compressed-Dateien neu erzeugen "
+                          "statt sie zu ueberspringen")
     args = ap.parse_args()
 
     if not os.path.exists(SIPS):
@@ -97,32 +124,51 @@ def main():
               file=sys.stderr)
         return 1
 
-    out_dir = args.out_dir or os.path.join(
-        os.path.dirname(os.path.abspath(args.images[0])) or ".", "compressed")
-    os.makedirs(out_dir, exist_ok=True)
+    if args.images:
+        sources = [p for p in args.images
+                   if os.path.isfile(p) and not is_already_compressed(p)]
+        scope = f"{len(sources)} angegebene Datei(en)"
+    else:
+        sources = list(find_recursive(args.root))
+        scope = f"{len(sources)} Bild(er) unter {os.path.abspath(args.root)}"
 
-    print(f"Ziel: {out_dir}\n")
+    if not sources:
+        print("Keine passenden Bilder gefunden (.jpg/.jpeg/.png, "
+              "nicht bereits _compressed).")
+        return 0
+
+    print(f"{scope}\n")
     total_before = total_after = 0
-    ok = 0
-    for img in args.images:
-        res = compress_one(img, out_dir, args.max_dim, args.quality,
-                            args.force_jpeg)
-        if res:
-            b, a = res
-            total_before += b
-            total_after += a
+    ok = skipped = failed = 0
+    for src in sources:
+        status, a, b = compress_one(src, args.max_dim, args.quality,
+                                     args.force_jpeg, args.redo)
+        if status == "skip":
+            skipped += 1
+            print(f"  {src:<55} bereits aktuell -> {os.path.basename(a)}")
+        elif status == "error":
+            failed += 1
+            print(f"  FEHLER  {src}: {a}", file=sys.stderr)
+        else:
             ok += 1
+            orig_size, new_size = a, b
+            total_before += orig_size
+            total_after += new_size
+            saved = 100 * (1 - new_size / orig_size) if orig_size else 0
+            print(f"  {src:<55} {human(orig_size):>9} -> "
+                  f"{human(new_size):>9}  ({saved:4.0f}% kleiner)")
 
     print()
     if ok:
         saved = 100 * (1 - total_after / total_before) if total_before else 0
-        print(f"{ok}/{len(args.images)} komprimiert: {human(total_before)} "
-              f"-> {human(total_after)} ({saved:.0f}% kleiner)")
-        print(f"Originale unveraendert. Kopien liegen in: {out_dir}")
-    if ok < len(args.images):
-        print(f"{len(args.images) - ok} fehlgeschlagen, siehe Fehler oben.",
-              file=sys.stderr)
-    return 0 if ok == len(args.images) else 1
+        print(f"{ok} komprimiert ({human(total_before)} -> "
+              f"{human(total_after)}, {saved:.0f}% kleiner), "
+              f"{skipped} schon aktuell, {failed} fehlgeschlagen.")
+    else:
+        print(f"0 komprimiert, {skipped} schon aktuell, "
+              f"{failed} fehlgeschlagen.")
+    print("Originale unveraendert.")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
