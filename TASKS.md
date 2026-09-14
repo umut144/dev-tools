@@ -6,10 +6,6 @@ Offene Punkte im Monorepo. Erledigtes fliegt raus, nicht ab.
 
 Stand nach dem externen Review. Behobenes steht unten.
 
-- [ ] **LaunchDaemon mit Warnstufen.** `install-agent` schreibt ein Plist mit
-      genau einer Schwelle (`--burst-mb` + `--action`); die `--stage`-Liste
-      wird nicht uebernommen. Erst noetig, wenn netguard dauerhaft im
-      Hintergrund laufen soll statt im Terminal.
 - [ ] **pf-Anchor ohne Eingriff in /etc/pf.conf.** Vorschlag aus dem Review:
       statt `anchor "netguard"` an pf.conf anzuhaengen, den verschachtelten
       Anchor `com.apple/000.netguard` benutzen - der haengt bereits im
@@ -22,12 +18,14 @@ Stand nach dem externen Review. Behobenes steht unten.
       lassen kann. Damit kann Stufe 2 gegen eine ausser Kontrolle geratene
       iCloud-Synchronisation nichts ausrichten. Denkbar waere, stattdessen
       gezielt die Synchronisation zu pausieren, statt den Prozess anzuhalten.
-- [ ] **Schwellen nachjustieren.** 12/30/55 MB je 10 s sind eine
-      Schaetzung, gemacht fuer den iPhone-Hotspot. Nach ein paar Tagen
-      zeigt `netguard report`, was real ausgeloest hat: Stufe 1 bei ganz
-      normalem Arbeiten heisst, die 12 MB sind zu scharf; `grep -c
+- [ ] **Schwellen nachjustieren.** 10/26/47 MB je 10 s (zuvor 12/30/55,
+      davor 12/24/36) - bewusst eher zu eng als zu locker eingestellt. Nach
+      ein paar Tagen zeigt `netguard report`, was real ausgeloest hat: Stufe
+      1 bei ganz normalem Arbeiten heisst, 10 MB ist zu scharf; `grep -c
       uebersprungen` ueber den Report heisst, der Messtakt von 2 s ist fuer
-      die realen Downloadraten zu grob.
+      die realen Downloadraten zu grob. Bei Dauerbetrieb ueber den Daemon
+      zusaetzlich `daemon-status`/die Logdateien pruefen statt nur
+      `netguard report` aus einer einzelnen Terminal-Session.
 - [ ] **Auto-Resume.** Eingefrorene Prozesse bleiben eingefroren, bis
       `netguard unblock` kommt oder netguard endet. Denkbar: nach N Sekunden
       Ruhe automatisch SIGCONT, mit Zaehler - beim dritten Mal bleibt der
@@ -37,6 +35,21 @@ Stand nach dem externen Review. Behobenes steht unten.
       Abrechnungstag.
 
 ### Erledigt
+
+- [x] **LaunchDaemon mit allen drei Warnstufen.** `install-agent` nimmt
+      jetzt wie `monitor` beliebig viele `--stage` an (Fallback auf die
+      alte Einzelstufe `--burst-mb`/`--action` bleibt, falls nichts
+      angegeben ist). Dazu `netguard daemon` / `daemon-status` /
+      `daemon-off` in der zsh-Funktion, die automatisch die aktuellen
+      NETGUARD_S1/2/3_MB-Werte uebernehmen. Nebenbei behoben: launchd
+      startet den Daemon ohne `sudo`, also ohne `SUDO_UID` - der
+      Besitz-Rueckfall in `_chown_to_invoker()` griff dort ins Leere
+      und das Log-Verzeichnis waere dauerhaft root:root/0700 geblieben,
+      selbst nach dem Login. Jetzt Fallback auf den grafisch
+      eingeloggten Console-User (`console_user()`, dieselbe Funktion,
+      die schon fuer Sound/Mitteilungen genutzt wird), und
+      `write_state()` zieht zusaetzlich das Verzeichnis selbst nach,
+      nicht nur die einzelne Datei.
 
 - [x] **SIGHUP abgefangen.** Bisher hoerte netguard nur auf SIGTERM/
       SIGINT, um angehaltene Prozesse beim Beenden wieder freizugeben.

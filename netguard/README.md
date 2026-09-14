@@ -22,6 +22,9 @@ exec zsh
 | `netguard unblock` | Alles freigeben |
 | `netguard report` | Die letzten Vorfaelle |
 | `netguard sound Basso` | Einen Systemsound probehoeren |
+| `netguard daemon` | Als LaunchDaemon installieren/aktualisieren (Dauerbetrieb, siehe unten) |
+| `netguard daemon-status` | Laeuft der Daemon gerade? |
+| `netguard daemon-off` | Daemon stoppen |
 
 `ng` ist ein Alias fuer `netguard` - und gleichzeitig das Kommando der
 Angular-CLI. Wer beides braucht, benennt den Alias in `shell/netguard.zsh`
@@ -35,21 +38,21 @@ Die Funktion ruft sudo dort auf, wo es gebraucht wird.
 
 Gemessen wird in einem gleitenden Fenster von 10 Sekunden:
 
-1. **ab 12 MB** (= 1,2 MB/s anhaltend) - Warnton `Ping`, Mitteilung, sonst nichts
-2. **ab 30 MB** (= 3,0 MB/s) - `Sosumi` dreimal, der Verursacher wird mit
+1. **ab 10 MB** (= 1,0 MB/s anhaltend) - Warnton `Ping`, Mitteilung, sonst nichts
+2. **ab 26 MB** (= 2,6 MB/s) - `Sosumi` dreimal, der Verursacher wird mit
    `SIGSTOP` eingefroren. Reversibel: `netguard unblock` setzt ihn fort.
-3. **ab 55 MB** (= 5,5 MB/s) - `Submarine` fuenfmal, Sprachansage, Netz aus.
+3. **ab 47 MB** (= 4,7 MB/s) - `Submarine` fuenfmal, Sprachansage, Netz aus.
 
-Die Abstaende zwischen den Stufen (18 und 25 MB) sind mit Absicht groesser
+Die Abstaende zwischen den Stufen (16 und 21 MB) sind mit Absicht groesser
 als der Zuwachs eines Messtakts: geprueft wird erst, wenn ein Sample fertig
 ist, also waechst das Fenster um `Rate x Intervall` auf einmal. Bei Intervall
-2 muesste ein Download schneller als 9 MB/s laufen, damit Stufe 1 gar nicht
+2 muesste ein Download schneller als 8 MB/s laufen, damit Stufe 1 gar nicht
 erst zum Zug kommt.
 
 ### Wen Stufe 2 anfasst
 
 Nur wer mindestens **20 % des Fenstervolumens** verursacht hat, hoechstens
-drei Prozesse. Der Videocall mit 500 KB bleibt also neben dem 30-MB-Download
+drei Prozesse. Der Videocall mit 500 KB bleibt also neben dem 26-MB-Download
 unbehelligt. Traegt niemand so viel bei - Verkehr gleichmaessig auf viele
 Prozesse verteilt -, trifft es den groessten allein, sonst waere die Stufe
 wirkungslos.
@@ -75,10 +78,11 @@ Cooldowns stumm zu bleiben. Wer nach einem erreichten **Tageslimit**
 entsperrt, will bewusst weitermachen - das Tageslimit ist dann fuer diesen
 Tag ausgesetzt, die Burst-Stufen bleiben aktiv.
 
-Beim Beenden (Strg-C oder SIGTERM) werden eingefrorene Prozesse wieder
-fortgesetzt - netguard laesst nichts eingefroren zurueck, wenn es selbst
-nicht mehr da ist. Ein abgeschaltetes Netz und ein pf-Block bleiben dagegen
-bestehen, bis `netguard unblock` kommt (oder `--unblock-on-exit` gesetzt ist).
+Beim Beenden (Strg-C, SIGTERM oder SIGHUP - etwa weil das Terminal-Fenster
+geschlossen wird) werden eingefrorene Prozesse wieder fortgesetzt - netguard
+laesst nichts eingefroren zurueck, wenn es selbst nicht mehr da ist. Ein
+abgeschaltetes Netz und ein pf-Block bleiben dagegen bestehen, bis
+`netguard unblock` kommt (oder `--unblock-on-exit` gesetzt ist).
 
 ## Testlauf
 
@@ -90,8 +94,12 @@ netguard test 8      # 8 MB/s
 Der Testmodus misst nichts Echtes und fuehrt keine Aktion aus - er schreibt
 `[SIMULATION] wuerde jetzt ... ausfuehren` und spielt die echten Toene, damit
 man Lautstaerke und Abfolge im Voraus hoert. Er loggt in ein eigenes
-Unterverzeichnis, damit das gezaehlte Tagesvolumen unberuehrt bleibt. Mit
-4 MB/s faellt Stufe 1 nach 3 s, Stufe 2 nach 6 s, Stufe 3 nach 9 s.
+Unterverzeichnis, damit das gezaehlte Tagesvolumen unberuehrt bleibt. Mit den
+Standard-4 MB/s (`netguard test`) faellt Stufe 1 nach etwa 3 s, Stufe 2 nach
+etwa 7 s - Stufe 3 (47 MB) wird bei 4 MB/s aber gar nicht erreicht, weil das
+10-Sekunden-Fenster bei Dauerlast auf `Rate x Fenster` = 40 MB deckelt, sobald
+die ersten Samples wieder herausrutschen. Um auch Stufe 3 zu sehen, hoeher
+ansetzen, z. B. `netguard test 6` (60 MB Deckel).
 
 ## Wie gemessen wird
 
@@ -99,8 +107,10 @@ Unterverzeichnis, damit das gezaehlte Tagesvolumen unberuehrt bleibt. Mit
   ist die Wahrheit ueber den tatsaechlichen Verbrauch.
 * **Zuordnung**: `nettop -P -d -L 2 -s <interval>` liefert echte Deltas pro
   Prozess ueber das ganze Intervall. Die Summe wird gegen das netstat-Delta
-  plausibilisiert; passt sie dauerhaft nicht, schaltet netguard selbst auf
-  den kumulativen Diff-Modus um (`--attrib delta|diff` erzwingt eine Variante).
+  plausibilisiert; passt sie dauerhaft nicht, gibt es nur eine
+  ratenbegrenzte Warnung - kein automatischer Wechsel mehr. Der kumulative
+  Diff-Modus (`--attrib diff`) kann bei schliessenden Sockets den falschen
+  Prozess als Verursacher ausweisen und ist deshalb nur manuell waehlbar.
 * Bei einem Vorfall wird zuerst geblockt und alarmiert, danach erst die
   Forensik (`ps`-Elternkette, offene Verbindungen via `lsof`) erhoben.
 * Standby- und Haenger-Luecken werden erkannt und nicht als Burst gewertet.
@@ -123,18 +133,38 @@ nicht mehr lesbar.
 
 Rotiert wird bei 50 MB je Datei, drei Generationen (`.1` bis `.3`).
 
-## Dauerbetrieb
+## Dauerbetrieb (LaunchDaemon)
 
 ```sh
-sudo ./netguard.py --logdir /var/log/netguard install-agent \
-     --burst-mb 24 --window 10 --action suspend        # zeigt das Plist
-sudo ./netguard.py ... install-agent ... --yes         # installiert es
+netguard daemon           # installieren/aktualisieren + sofort starten
+netguard daemon-status    # laeuft er gerade?
+netguard daemon-off       # stoppen, startet nicht mehr automatisch
 ```
 
-Der LaunchDaemon startet bei jedem Boot. Stoppen:
-`sudo launchctl bootout system /Library/LaunchDaemons/local.netguard.plist`.
-Mehrstufige Konfigurationen gehen dort noch nicht - der Agent faehrt eine
-einzelne Schwelle.
+`netguard daemon` uebernimmt automatisch die aktuell in `shell/netguard.zsh`
+eingestellten drei Stufen (`NETGUARD_S1_MB` etc.) - dieselbe `--stage`-Syntax
+wie beim interaktiven Aufruf, keine gesonderte Konfiguration. Der Daemon
+laeuft ab dann bei jedem Systemstart als root im Hintergrund, auch ohne
+angemeldeten Benutzer und ohne offenes Terminal; Strg-C gibt es dafuer nicht
+mehr, beenden geht nur ueber `netguard daemon-off`.
+
+Die Logs bleiben im selben Repo-Ordner (`netguard/logs/`) wie im
+Terminalbetrieb - `netguard status`/`report`/`unblock`/`test` funktionieren
+also unveraendert nebenher, sie teilen sich `state.json`. Weil launchd den
+Daemon direkt als root startet (kein `sudo`, kein `SUDO_UID`), gehoert das
+Log-Verzeichnis anfangs root, bis sich jemand grafisch anmeldet: sobald ein
+Benutzer eingeloggt ist, zieht der naechste Schreibzugriff das
+Verzeichnis automatisch auf dessen Besitz nach - vor dem ersten Login sind
+`netguard status` & Co. also kurzzeitig nur mit `sudo` erreichbar.
+
+Ein `sudo netguard install-agent ...` (bzw. `install-agent --stage ...`) von
+Hand geht weiterhin, etwa fuer eine abweichende Konfiguration ausserhalb der
+zsh-Defaults - `netguard daemon` ist nur der bequeme Weg mit den aktuellen
+Werten.
+
+Laeuft der Daemon dauerhaft, ist ein zusaetzliches `netguard` (bzw. `ng`,
+ohne Subkommando) im Terminal unnoetig: beide wuerden unabhaengig voneinander
+denselben Traffic messen und im Zweifel doppelt eskalieren.
 
 ## Optional: pf-Kill-Switch
 
@@ -142,9 +172,9 @@ einzelne Schwelle.
 sudo ./netguard.py install-pf --yes
 ```
 
-Danach ist `--stage 36:pf` moeglich: blockt alles auf dem Interface ueber die
-pf-Firewall und flusht bestehende Verbindungen, damit ein laufender Download
-wirklich stoppt. `netguard unblock` leert den Anchor und gibt das
+Danach ist z. B. `--stage 47:pf` moeglich (anstelle von `47:wifi`): blockt
+alles auf dem Interface ueber die pf-Firewall und flusht bestehende
+Verbindungen, damit ein laufender Download wirklich stoppt. `netguard unblock` leert den Anchor und gibt das
 pf-Enable-Token zurueck.
 
 ## Zur sudo-Grenze

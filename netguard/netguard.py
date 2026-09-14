@@ -490,10 +490,23 @@ def _chown_to_invoker(path):
     Laeuft netguard unter sudo, gehoerten neue Logdateien sonst root - und der
     eigentliche Benutzer kaeme an sein eigenes Logverzeichnis (0700) nicht mehr
     heran. Deshalb zurueck an den User, der sudo aufgerufen hat.
+
+    Als LaunchDaemon startet launchd netguard direkt als root, ohne sudo -
+    SUDO_UID ist dann leer. Fallback: der grafisch eingeloggte Console-User
+    (vor dem Login gehoert die Konsole root, dann passiert schlicht nichts -
+    das heilt sich selbst, sobald sich jemand einloggt und der naechste
+    Schreibzugriff kommt).
     """
     if os.geteuid() != 0:
         return
     uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
+    if not (uid and uid.isdigit()):
+        user = console_user()
+        if user and user != "root":
+            u = run(["/usr/bin/id", "-u", user]).strip()
+            g = run(["/usr/bin/id", "-g", user]).strip()
+            uid = u if u.isdigit() else None
+            gid = g if g.isdigit() else None
     if not (uid and uid.isdigit()):
         return
     try:
@@ -552,6 +565,8 @@ class Logger:
             # os.replace legt eine neue Datei an - der Besitzer faellt sonst
             # bei jedem Schreiben auf root zurueck, nicht nur beim ersten Mal.
             _chown_to_invoker(self.state_file)
+            _chown_to_invoker(self.dir)  # s. _chown_to_invoker: Login kann
+                                          # erst nach dem Start passiert sein
         except OSError:
             pass
 
@@ -593,6 +608,10 @@ class Stage:
             else f"{self.sound} x{self.repeat}"
         return (f"ab {self.mb:g} MB -> {self.action} ({ton}"
                 + (f", Ansage '{self.say}'" if self.say else "") + ")")
+
+    def to_spec(self):
+        """Gegenstueck zu parse_stage() - fuer den LaunchDaemon-Plist."""
+        return f"{self.mb:g}:{self.action}:{self.sound}:{self.repeat}:{self.say}"
 
 
 def parse_stage(spec):
@@ -1554,15 +1573,7 @@ PLIST = """<?xml version="1.0" encoding="UTF-8"?>
   <array>
     <string>{python}</string>
     <string>{script}</string>
-    <string>--logdir</string><string>{logdir}</string>
-{iface}    <string>monitor</string>
-    <string>--interval</string><string>{interval}</string>
-    <string>--burst-mb</string><string>{burst}</string>
-    <string>--window</string><string>{window}</string>
-    <string>--daily-mb</string><string>{daily}</string>
-    <string>--action</string><string>{action}</string>
-    <string>--sound</string><string>{sound}</string>
-    <string>--sound-repeat</string><string>{sound_repeat}</string>
+{args}
   </array>
   <key>RunAtLoad</key><true/>
   <!-- nur bei Absturz neu starten: ein sauberes Ende (etwa nach einem
@@ -1579,18 +1590,36 @@ PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def cmd_install_agent(args):
+    """
+    Baut dieselbe Argumentliste wie ein interaktiver 'monitor'-Aufruf -
+    inklusive mehrerer --stage, falls angegeben - und schreibt sie in den
+    Plist. Ohne --stage bleibt die alte Einzelstufe (--burst-mb/--action)
+    als Fallback erhalten.
+    """
     script = os.path.abspath(__file__)
-    iface = ""
+    argv = ["--logdir", args.logdir]
     if args.iface:
-        iface = (f'    <string>--iface</string>'
-                 f'<string>{xml_escape(args.iface)}</string>\n')
+        argv += ["--iface", args.iface]
+    argv += ["monitor",
+             "--interval", str(args.interval),
+             "--window", str(args.window),
+             "--daily-mb", str(args.daily_mb)]
+    stages = getattr(args, "stage", None) or []
+    if stages:
+        for st in stages:
+            argv += ["--stage", st.to_spec()]
+    else:
+        argv += ["--burst-mb", str(args.burst_mb),
+                 "--action", args.action,
+                 "--sound", args.sound,
+                 "--sound-repeat", str(args.sound_repeat)]
+    argv += ["-v"]
+
+    args_xml = "\n".join(f"    <string>{xml_escape(a)}</string>" for a in argv)
     plist = PLIST.format(
         python=xml_escape(sys.executable or "/usr/bin/python3"),
-        script=xml_escape(script), iface=iface,
-        logdir=xml_escape(args.logdir), interval=args.interval,
-        burst=args.burst_mb, window=args.window, daily=args.daily_mb,
-        action=args.action, sound=xml_escape(args.sound),
-        sound_repeat=args.sound_repeat)
+        script=xml_escape(script), args=args_xml,
+        logdir=xml_escape(args.logdir))
     target = "/Library/LaunchDaemons/local.netguard.plist"
     if not args.yes:
         print(f"Wuerde schreiben nach {target}:\n")
@@ -1729,10 +1758,15 @@ def build_parser():
 
     ia = child("install-agent", help="als LaunchDaemon installieren")
     ia.add_argument("--yes", action="store_true")
-    ia.add_argument("--interval", type=int, default=5)
-    ia.add_argument("--burst-mb", type=float, default=50.0)
-    ia.add_argument("--window", type=int, default=60)
+    ia.add_argument("--interval", type=int, default=2)
+    ia.add_argument("--window", type=int, default=10)
     ia.add_argument("--daily-mb", type=float, default=0.0)
+    ia.add_argument("--stage", action="append", type=parse_stage, metavar="SPEC",
+                     help="wie bei 'monitor' - mehrfach angebbar, ueberschreibt "
+                          "--burst-mb/--action komplett, sobald mindestens "
+                          "einmal gesetzt")
+    ia.add_argument("--burst-mb", type=float, default=50.0,
+                     help="Fallback-Einzelstufe, nur wirksam ohne --stage")
     ia.add_argument("--action", default="notify", choices=list(STAGE_ACTIONS))
     ia.add_argument("--sound", default="Sosumi")
     ia.add_argument("--sound-repeat", type=int, default=3)
