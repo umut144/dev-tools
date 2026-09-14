@@ -10,6 +10,8 @@
 #   compressimgs                 # aktuellen Ordner rekursiv verarbeiten
 #   compressimgs --max-dim 1600 --quality 80
 #   compressimgs karte.png       # nur eine bestimmte Datei
+#   compressimgs --replace       # Originale direkt ersetzen, kein
+#                                 # zusaetzliches _compressed-Bild
 #
 # compressimgs ist eine zsh-Funktion, kein Programm - sie ruft im
 # Hintergrund compress-for-claude auf, und zwar IMMER bezogen auf das

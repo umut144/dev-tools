@@ -25,6 +25,7 @@ compressimgs                            # kompletten Ordner rekursiv verarbeiten
 compressimgs --max-dim 1600 --quality 80
 compressimgs karte_drache.png           # nur eine bestimmte Datei, keine Rekursion
 compressimgs --redo                     # bestehende _compressed-Dateien neu erzeugen
+compressimgs --replace                  # Originale direkt ersetzen, kein _compressed daneben
 ```
 
 `compressimgs` bezieht sich immer auf das Verzeichnis, in dem du gerade
@@ -55,7 +56,34 @@ sind nur `.git`, `target`, `node_modules`, `__pycache__`, `.venv`, `venv`,
 * `--force-jpeg` wandelt auch PNGs verlustbehaftet zu JPEG (kleiner, aber
   keine Transparenz mehr) - nur wenn du das wirklich willst.
 
-Keine Abhaengigkeiten: nutzt ausschliesslich das in macOS eingebaute `sips`.
+## --replace: Originale direkt ersetzen
+
+Standardmaessig legt `compressimgs` neben jedem Original eine `_compressed`-
+Kopie an. Mit `--replace` passiert das nicht - stattdessen wird das
+Original unter dem **exakt gleichen Namen** komprimiert ersetzt:
+
+```sh
+compressimgs --replace
+```
+
+**Unwiderruflich, keine Sicherheitskopie.** Das Original ist danach weg,
+nur die komprimierte Version bleibt unter dem alten Namen liegen.
+
+Damit ein zweiter Lauf im selben Ordner ein bereits ersetztes Bild nicht
+nochmal (verlustbehaftet, mit sichtbarem Qualitaetsverlust) komprimiert,
+merkt sich das Skript pro Datei ein xattr (ein Dateiattribut, keine
+zusaetzliche Datei im Ordner) mit dem Zustand direkt nach dem Ersetzen.
+Nur Bilder, die sich seitdem wirklich geaendert haben (neuer Zeitstempel
+und/oder andere Groesse - z. B. weil du ein neues Original reinkopiert
+hast), werden beim naechsten `--replace`-Lauf neu komprimiert. `--redo`
+erzwingt trotzdem eine Neukomprimierung aller Treffer.
+
+Sonderfall `--replace --force-jpeg` auf einer PNG-Datei: die Endung MUSS
+sich zu `.jpg` aendern, dabei bleibt der Name nicht 1:1 gleich. Das alte
+`.png` wird danach geloescht, damit nicht zwei Dateien uebrig bleiben.
+
+Keine Abhaengigkeiten: nutzt ausschliesslich das in macOS eingebaute
+`sips` (Komprimierung) und `xattr` (Merker fuer `--replace`).
 
 ## Bekannte Unsicherheit: --quality-Syntax
 

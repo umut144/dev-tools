@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 compressimgs - Bilder verkleinern/komprimieren, bevor sie einer Claude-
-Session vorgelegt werden. Nutzt ausschliesslich `sips` (in macOS eingebaut)
-- keine Abhaengigkeiten, kein pip/brew noetig.
+Session vorgelegt werden. Nutzt ausschliesslich `sips` und `xattr` (beide
+in macOS eingebaut) - keine Abhaengigkeiten, kein pip/brew noetig.
 
 Ohne Argumente: durchsucht das AKTUELLE Verzeichnis rekursiv (alle
 Unterordner) nach .jpg/.jpeg/.png und legt neben jedem Original eine
@@ -13,6 +13,14 @@ Originale werden nie angefasst. Schon komprimierte Dateien (erkannt am
 vorhandene, aktuelle _compressed-Datei wird nicht neu erzeugt (Zeitstempel-
 Vergleich) - erneutes Aufrufen im selben Ordner ist also guenstig.
 
+--replace: KEINE separate _compressed-Datei, sondern das Original wird
+direkt an Ort und Stelle unter dem gleichen Namen ersetzt (unwiderruflich,
+keine Sicherheitskopie!). Damit ein zweiter Lauf im selben Ordner ein
+bereits ersetztes Bild nicht nochmal (verlustbehaftet) komprimiert, merkt
+sich das Skript pro Datei ueber ein xattr (Dateiattribut, keine zusaetzliche
+Datei im Ordner) den Zustand direkt nach dem Komprimieren. Nur Bilder, die
+sich seitdem wirklich geaendert haben, werden neu komprimiert.
+
 Mit expliziten Dateien als Argumente: nur diese verarbeiten, keine
 Rekursion.
 
@@ -21,7 +29,9 @@ Beispiele:
   compressimgs --max-dim 1600 --quality 80
   compressimgs karte_drache.png         # nur eine Datei
   compressimgs --root reference_drawings
-  compressimgs --redo                   # bestehende _compressed-Dateien neu erzeugen
+  compressimgs --redo                   # bestehende Ausgaben neu erzeugen
+  compressimgs --replace                # Originale direkt ersetzen, kein
+                                         # zusaetzliches _compressed-Bild
 
 Falls die numerische --quality auf deiner macOS-Version von sips nicht
 angenommen wird (manche Quellen dokumentieren nur low/normal/high/best/
@@ -35,6 +45,8 @@ import subprocess
 import sys
 
 SIPS = "/usr/bin/sips"
+XATTR = "/usr/bin/xattr"
+XATTR_KEY = "user.compressimgs.state"
 IMAGE_EXT = {".jpg", ".jpeg", ".png"}
 SUFFIX = "_compressed"
 EXCLUDE_DIRS = {".git", "target", "node_modules", "__pycache__",
@@ -71,7 +83,83 @@ def dest_for(src, to_jpeg):
     return os.path.join(d, f"{stem}{SUFFIX}{out_ext}")
 
 
-def compress_one(src, max_dim, quality, force_jpeg, redo):
+def file_state(path):
+    """Momentaufnahme (mtime:size) einer Datei, oder None wenn nicht lesbar."""
+    try:
+        return f"{os.path.getmtime(path):.6f}:{os.path.getsize(path)}"
+    except OSError:
+        return None
+
+
+def read_marker(path):
+    if not os.path.exists(XATTR):
+        return None
+    r = subprocess.run([XATTR, "-p", XATTR_KEY, path],
+                        capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
+def write_marker(path):
+    if not os.path.exists(XATTR):
+        return
+    state = file_state(path)
+    if state is None:
+        return
+    subprocess.run([XATTR, "-w", XATTR_KEY, state, path],
+                    capture_output=True, text=True)
+
+
+def tmp_path_for(dst):
+    d, base = os.path.split(dst)
+    stem, ext = os.path.splitext(base)
+    return os.path.join(d or ".", f".{stem}.compressimgs-tmp{ext}")
+
+
+def run_sips(src, dst, max_dim, quality, to_jpeg):
+    cmd = [SIPS, "-Z", str(max_dim)]
+    if to_jpeg:
+        cmd += ["-s", "format", "jpeg", "-s", "formatOptions", str(quality)]
+    cmd += [src, "--out", dst]
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def compress_replace(src, max_dim, quality, force_jpeg, redo):
+    ext = os.path.splitext(src)[1].lower()
+    to_jpeg = force_jpeg or ext in (".jpg", ".jpeg")
+    # Normalerweise bleibt der Name exakt gleich. Nur wenn --force-jpeg ein
+    # PNG zu JPEG wandelt, MUSS sich die Endung aendern - dann wird das alte
+    # .png danach entfernt, damit nicht zwei Dateien uebrig bleiben.
+    changes_ext = to_jpeg and ext not in (".jpg", ".jpeg")
+    dst = os.path.splitext(src)[0] + ".jpg" if changes_ext else src
+
+    if not redo:
+        state = file_state(src)
+        if state is not None and read_marker(src) == state:
+            return "skip", dst, None
+
+    orig_size = os.path.getsize(src)
+    tmp_dst = tmp_path_for(dst)
+    r = run_sips(src, tmp_dst, max_dim, quality, to_jpeg)
+    if r.returncode != 0 or not os.path.exists(tmp_dst):
+        if os.path.exists(tmp_dst):
+            try:
+                os.remove(tmp_dst)
+            except OSError:
+                pass
+        return "error", (r.stderr or r.stdout).strip(), None
+
+    os.replace(tmp_dst, dst)          # atomarer Tausch, kein halb-fertiger Zustand
+    if changes_ext:
+        os.remove(src)                 # altes .png verschwindet, .jpg bleibt
+
+    new_size = os.path.getsize(dst)
+    write_marker(dst)
+    return "ok", orig_size, new_size
+
+
+def compress_sidecar(src, max_dim, quality, force_jpeg, redo):
     ext = os.path.splitext(src)[1].lower()
     to_jpeg = force_jpeg or ext in (".jpg", ".jpeg")
     dst = dest_for(src, to_jpeg)
@@ -84,12 +172,7 @@ def compress_one(src, max_dim, quality, force_jpeg, redo):
             pass
 
     orig_size = os.path.getsize(src)
-    cmd = [SIPS, "-Z", str(max_dim)]
-    if to_jpeg:
-        cmd += ["-s", "format", "jpeg", "-s", "formatOptions", str(quality)]
-    cmd += [src, "--out", dst]
-
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = run_sips(src, dst, max_dim, quality, to_jpeg)
     if r.returncode != 0 or not os.path.exists(dst):
         return "error", (r.stderr or r.stdout).strip(), None
 
@@ -97,10 +180,16 @@ def compress_one(src, max_dim, quality, force_jpeg, redo):
     return "ok", orig_size, new_size
 
 
+def compress_one(src, max_dim, quality, force_jpeg, redo, replace):
+    if replace:
+        return compress_replace(src, max_dim, quality, force_jpeg, redo)
+    return compress_sidecar(src, max_dim, quality, force_jpeg, redo)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Bilder fuer Claude verkleinern/komprimieren (sips, "
-                     "keine Abhaengigkeiten). Ueberschreibt nie Originale.")
+                     "keine Abhaengigkeiten).")
     ap.add_argument("images", nargs="*",
                      help="bestimmte Bilddateien statt rekursivem Scan")
     ap.add_argument("--root", default=".",
@@ -115,8 +204,12 @@ def main():
                      help="auch PNGs verlustbehaftet zu JPEG wandeln - "
                           "kleiner, aber keine Transparenz mehr")
     ap.add_argument("--redo", action="store_true",
-                     help="bestehende _compressed-Dateien neu erzeugen "
-                          "statt sie zu ueberspringen")
+                     help="bestehende Ausgaben neu erzeugen statt sie zu "
+                          "ueberspringen")
+    ap.add_argument("--replace", action="store_true",
+                     help="Original direkt unter gleichem Namen ersetzen "
+                          "statt eine _compressed-Datei danebenzulegen. "
+                          "UNWIDERRUFLICH, keine Sicherheitskopie.")
     args = ap.parse_args()
 
     if not os.path.exists(SIPS):
@@ -137,12 +230,18 @@ def main():
               "nicht bereits _compressed).")
         return 0
 
-    print(f"{scope}\n")
+    if args.replace:
+        print(f"{scope}  [--replace: Originale werden ersetzt, "
+              f"unwiderruflich]\n")
+    else:
+        print(f"{scope}\n")
+
     total_before = total_after = 0
     ok = skipped = failed = 0
     for src in sources:
         status, a, b = compress_one(src, args.max_dim, args.quality,
-                                     args.force_jpeg, args.redo)
+                                     args.force_jpeg, args.redo,
+                                     args.replace)
         if status == "skip":
             skipped += 1
             print(f"  {src:<55} bereits aktuell -> {os.path.basename(a)}")
@@ -167,7 +266,10 @@ def main():
     else:
         print(f"0 komprimiert, {skipped} schon aktuell, "
               f"{failed} fehlgeschlagen.")
-    print("Originale unveraendert.")
+    if args.replace:
+        print("Originale ersetzt (kein Backup).")
+    else:
+        print("Originale unveraendert.")
     return 1 if failed else 0
 
 
