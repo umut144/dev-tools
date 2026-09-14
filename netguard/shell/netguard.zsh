@@ -129,8 +129,13 @@ netguard() {
       sudo /bin/launchctl print system/local.netguard 2>&1 | head -25
       ;;
     daemon-off|daemon-uninstall|daemon-stop)
+      # bootout allein reicht nicht: das Plist liegt weiter in
+      # /Library/LaunchDaemons, und launchd laedt bei jedem Boot automatisch
+      # alles dort - ohne "disable" waere der Daemon nach einem Neustart
+      # wieder da. disable ist die Variante, die das ueberlebt.
       sudo /bin/launchctl bootout system /Library/LaunchDaemons/local.netguard.plist 2>&1
-      print "LaunchDaemon gestoppt - startet nicht mehr automatisch. 'netguard daemon' installiert/startet ihn wieder."
+      sudo /bin/launchctl disable system/local.netguard 2>&1
+      print "LaunchDaemon gestoppt - bleibt auch nach einem Neustart aus. 'netguard daemon' aktiviert und startet ihn wieder."
       ;;
     help|-h|--help)
       _netguard_help

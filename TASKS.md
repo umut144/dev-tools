@@ -36,6 +36,16 @@ Stand nach dem externen Review. Behobenes steht unten.
 
 ### Erledigt
 
+- [x] **daemon-off war nicht dauerhaft.** `launchctl bootout` stoppt nur
+      die laufende Instanz - das Plist bleibt in /Library/LaunchDaemons
+      liegen, und launchd laedt bei jedem Boot automatisch alles dort.
+      Ohne `launchctl disable` waere ein per `daemon-off` gestoppter
+      Daemon nach dem naechsten Neustart einfach wieder da gewesen -
+      genau das Gegenteil von dem, was die Meldung versprach. Jetzt
+      setzt `daemon-off` zusaetzlich `disable` (persistent), und
+      `netguard daemon` setzt vor dem Neustart wieder `enable`, falls
+      zuvor disabled wurde.
+
 - [x] **LaunchDaemon mit allen drei Warnstufen.** `install-agent` nimmt
       jetzt wie `monitor` beliebig viele `--stage` an (Fallback auf die
       alte Einzelstufe `--burst-mb`/`--action` bleibt, falls nichts

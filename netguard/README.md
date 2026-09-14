@@ -138,8 +138,13 @@ Rotiert wird bei 50 MB je Datei, drei Generationen (`.1` bis `.3`).
 ```sh
 netguard daemon           # installieren/aktualisieren + sofort starten
 netguard daemon-status    # laeuft er gerade?
-netguard daemon-off       # stoppen, startet nicht mehr automatisch
+netguard daemon-off       # stoppen, bleibt auch nach einem Neustart aus
 ```
+
+(`daemon-off` macht intern sowohl `launchctl bootout` - sofort stoppen - als
+auch `launchctl disable` - persistent, sonst laedt launchd das Plist beim
+naechsten Boot einfach wieder. `netguard daemon` hebt ein vorheriges
+`disable` automatisch wieder auf.)
 
 `netguard daemon` uebernimmt automatisch die aktuell in `shell/netguard.zsh`
 eingestellten drei Stufen (`NETGUARD_S1_MB` etc.) - dieselbe `--stage`-Syntax

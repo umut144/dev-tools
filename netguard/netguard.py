@@ -1635,9 +1635,13 @@ def cmd_install_agent(args):
     os.chmod(target, 0o644)
     os.chown(target, 0, 0)
     subprocess.run(["/bin/launchctl", "bootout", "system", target], capture_output=True)
+    # falls 'daemon-off' zuvor disable gesetzt hat (persistent, siehe dort) -
+    # ohne enable wuerde bootstrap sonst stumm nichts starten.
+    subprocess.run(["/bin/launchctl", "enable", "system/local.netguard"], capture_output=True)
     subprocess.run(["/bin/launchctl", "bootstrap", "system", target], capture_output=True)
     print(f"Installiert und gestartet: {target}")
-    print("Stoppen: sudo launchctl bootout system " + target)
+    print("Stoppen (nur bis zum naechsten Neustart): sudo launchctl bootout system " + target)
+    print("Dauerhaft aus, auch nach Neustart: sudo launchctl disable system/local.netguard")
     return 0
 
 
