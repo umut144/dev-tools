@@ -113,17 +113,22 @@ IMPLAUSIBLE_STREAK = 3
 # ---------------------------------------------------------------- Hilfsfunktionen
 
 
-def run(cmd, timeout=15):
+def run(cmd, timeout=15, quiet_rc=()):
     """
     Kommando ausfuehren, stdout als Text zurueck. Fehler -> leerer String.
     LC_ALL=C, weil hier Ausgaben geparst werden: `ps -o lstart=` etwa
     formatiert das Datum sonst nach Locale.
+    quiet_rc: Returncodes, die ohne stderr-Text kein Fehler sind (lsof liefert
+    rc=1, wenn der Prozess gerade keine Sockets offen hat).
+    stdin=DEVNULL + eigene Session: Kindprozesse bekommen kein Terminal und
+    koennen dessen Modus (z.B. Zeilenumbruch) nicht verstellen.
     """
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL, start_new_session=True,
                            env=dict(os.environ, LC_ALL="C", LANG="C"))
-        if VERBOSE and p.returncode != 0:
-            err = (p.stderr or "").strip().splitlines()
+        err = (p.stderr or "").strip().splitlines()
+        if VERBOSE and p.returncode != 0 and not (p.returncode in quiet_rc and not err):
             print(f"[netguard] {cmd[0]} rc={p.returncode}: {err[0] if err else ''}",
                   file=sys.stderr)
         return p.stdout or ""
@@ -229,7 +234,10 @@ def play_alert(sound="Sosumi", repeat=3, volume=1.5, say_text=None):
         try:
             procs.append(subprocess.Popen(
                 _as_console_user(["/bin/sh", "-c", "; ".join(chain)]),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+                # Ohne Terminal: sudo (use_pty) schaltet das Terminal sonst
+                # waehrend des Alarms in den Raw-Modus -> Ausgabe verrutscht.
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True))
         except OSError:
             pass
     return procs
@@ -272,7 +280,8 @@ def notify(title, message, sound=None, timeout=10):
         if uid.isdigit():
             cmd = ["/bin/launchctl", "asuser", uid, "/usr/bin/sudo", "-u", user] + cmd
     try:
-        subprocess.run(cmd, capture_output=True, timeout=timeout)
+        subprocess.run(cmd, capture_output=True, timeout=timeout,
+                       stdin=subprocess.DEVNULL, start_new_session=True)
     except (subprocess.TimeoutExpired, OSError) as e:
         print(f"[netguard] Notification fehlgeschlagen: {e}", file=sys.stderr)
 
@@ -460,9 +469,28 @@ def proc_info(pid, snap=None):
     return info
 
 
+def proc_connections_raw(pid, timeout=8):
+    """Die ungekuerzte lsof-Ausgabe fuer einen Prozess, Zeile fuer Zeile -
+    fuer burst_log, wo mehr Kontext als die geparste Ziel-Liste aus
+    proc_connections() nuetzlich ist."""
+    out = run(["/usr/sbin/lsof", "-nP", "-i", "-a", "-p", str(pid)], timeout=timeout,
+              quiet_rc=(1,))
+    return out.splitlines()
+
+
+def system_wide_connections(limit_lines=200, timeout=15):
+    """Alles, was das System JETZT an Netzwerk-Verbindungen offen hat - nicht
+    auf einen Verursacher eingeschraenkt. Fuer den Fall, dass der eigentliche
+    Verursacher unter den gemeldeten Top-Prozessen gar nicht auftaucht (siehe
+    unattributed_bytes)."""
+    out = run(["/usr/sbin/lsof", "-nP", "-i"], timeout=timeout, quiet_rc=(1,))
+    return out.splitlines()[:limit_lines]
+
+
 def proc_connections(pid, limit=12, timeout=8):
     """Offene Verbindungen des Prozesses - zeigt WOHIN der Traffic ging."""
-    out = run(["/usr/sbin/lsof", "-nP", "-i", "-a", "-p", str(pid)], timeout=timeout)
+    out = run(["/usr/sbin/lsof", "-nP", "-i", "-a", "-p", str(pid)], timeout=timeout,
+              quiet_rc=(1,))
     conns = []
     for line in out.splitlines()[1:]:
         parts = line.split()
@@ -481,6 +509,34 @@ def proc_connections(pid, limit=12, timeout=8):
             seen.add(c)
             uniq.append(c)
     return uniq
+
+
+def proc_connections_deep(pid, snap, limit=12, timeout=8, max_children=8):
+    """
+    Wie proc_connections, schaut bei leerem Ergebnis aber auch bei den
+    Kindprozessen nach.
+
+    Chromium/Electron-Apps wie Claude.app halten ihre Netzwerk-Sockets in
+    einem sandboxed Utility-Kindprozess (--utility-sub-type=
+    network.mojom.NetworkService), nicht im Hauptprozess - nettop rechnet
+    den Traffic trotzdem dem Hauptprozess zu. `lsof -p <Hauptprozess-PID>`
+    findet dann nichts, obwohl die Verbindung existiert; sie steckt beim
+    Kind. snap ist der ps_snapshot() von build_incident - kostet hier keinen
+    weiteren ps-Aufruf.
+    """
+    own = proc_connections(pid, limit=limit, timeout=timeout)
+    if own or not snap:
+        return own
+    children = [p for p, e in snap.items() if e.get("ppid") == pid][:max_children]
+    seen, merged = set(), []
+    for child_pid in children:
+        for conn in proc_connections(child_pid, limit=limit, timeout=timeout):
+            if conn not in seen:
+                seen.add(conn)
+                merged.append(conn)
+        if len(merged) >= limit:
+            break
+    return merged[:limit]
 
 
 def proc_start_key(pid):
@@ -533,6 +589,12 @@ class Logger:
         self.samples = os.path.join(self.dir, "samples.jsonl")
         self.incidents = os.path.join(self.dir, "incidents.jsonl")
         self.state_file = os.path.join(self.dir, "state.json")
+        # Nur Stufe 2/3: dieselben Vorfaelle wie in incidents.jsonl, aber mit
+        # der vollen Forensik (kompletter ps-Snapshot, rohe lsof-Ausgabe,
+        # System-weiter Netzwerk-Snapshot) statt der knappen Kurzfassung -
+        # damit ein spaeterer Blick nicht an einem leeren "connections": []
+        # haengen bleibt.
+        self.burst_log_path = os.path.join(self.dir, "burst_log.jsonl")
 
     def _append(self, path, obj):
         is_new = not os.path.exists(path)
@@ -551,6 +613,9 @@ class Logger:
 
     def incident(self, obj):
         self._append(self.incidents, obj)
+
+    def burst(self, obj):
+        self._append(self.burst_log_path, obj)
 
     def read_state(self):
         try:
@@ -577,7 +642,7 @@ class Logger:
             pass
 
     def rotate(self, max_bytes=50 * 1024 * 1024, keep=3):
-        for path in (self.samples, self.incidents):
+        for path in (self.samples, self.incidents, self.burst_log_path):
             try:
                 if os.path.exists(path) and os.path.getsize(path) > max_bytes:
                     for i in range(keep - 1, 0, -1):
@@ -1160,7 +1225,7 @@ class Monitor:
                 continue
             entry = {"process": name, "pid": pid, "bytes": byts, "human": human(byts)}
             entry.update(proc_info(pid, snap))
-            entry["connections"] = [] if self.sim else proc_connections(pid)
+            entry["connections"] = [] if self.sim else proc_connections_deep(pid, snap)
             culprits.append(entry)
         return {
             "ts": now_iso(),
@@ -1182,6 +1247,43 @@ class Monitor:
             "action": stage.action,
             "action_result": result,
             "culprits": culprits,
+        }
+
+    def build_burst_extra(self, top, snap):
+        """
+        Nur fuer Stufe 2/3, zusaetzlich zu build_incident: alles, was dort aus
+        Kostengruenden gekuerzt oder ausgelassen wird - voller ps-Snapshot
+        (nicht nur die Verursacher und ihre Eltern), rohe lsof-Zeilen statt
+        der geparsten Ziel-Liste, und ein System-weiter Verbindungs-Schnappschuss
+        fuer den Fall, dass der eigentliche Verursacher gar nicht unter den
+        gemeldeten Top-Prozessen steckt. Damit haengt eine spaetere Untersuchung
+        nicht an einem leeren "connections": [] fest.
+        """
+        culprits = []
+        for name, pid, byts in top:
+            entry = {"process": name, "pid": pid, "bytes": byts, "human": human(byts)}
+            entry.update(proc_info(pid, snap))
+            entry["connections_raw"] = proc_connections_raw(pid)
+            children = [p for p, e in snap.items() if e.get("ppid") == pid]
+            entry["children"] = []
+            for child_pid in children[:8]:
+                child_conns = proc_connections_raw(child_pid)
+                child_e = snap.get(child_pid, {})
+                entry["children"].append({
+                    "pid": child_pid,
+                    "comm": child_e.get("comm", "?"),
+                    "args": child_e.get("args", "")[:300],
+                    "connections_raw": child_conns,
+                })
+            culprits.append(entry)
+        return {
+            "ts": now_iso(),
+            "type": "burst",
+            "simulated": bool(self.sim),
+            "interface": self.iface,
+            "culprits": culprits,
+            "system_wide_connections": [] if self.sim else system_wide_connections(),
+            "ps_snapshot": snap,
         }
 
     def print_incident(self, inc):
@@ -1251,6 +1353,11 @@ class Monitor:
                                   residual, skipped, snap=snap)
         self.log.incident(inc)
         self.print_incident(inc)
+        if level >= 2:
+            # Stufe 1 ist meist Rauschen (Videocalls, normale Downloads);
+            # erst ab Stufe 2 lohnt sich die teure volle Forensik.
+            burst_snap = snap if snap is not None else ps_snapshot()
+            self.log.burst(self.build_burst_extra(top, burst_snap))
         return inc
 
     # -- Beenden -------------------------------------------------------------
