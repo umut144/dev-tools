@@ -34,9 +34,9 @@ fi
 # --- feste Werte: hier aendern ---------------------------------------------
 : ${NETGUARD_WINDOW:=10}        # Messfenster in Sekunden
 : ${NETGUARD_INTERVAL:=2}       # Messtakt in Sekunden
-: ${NETGUARD_S1_MB:=10}         # Stufe 1: nur Warnton
-: ${NETGUARD_S2_MB:=26}         # Stufe 2: Verursacher einfrieren (SIGSTOP)
-: ${NETGUARD_S3_MB:=47}         # Stufe 3: WLAN aus
+: ${NETGUARD_S1_MB:=8}          # Stufe 1: nur Warnton
+: ${NETGUARD_S2_MB:=16}         # Stufe 2: Verursacher einfrieren (SIGSTOP)
+: ${NETGUARD_S3_MB:=32}         # Stufe 3: WLAN aus
 : "${NETGUARD_S1_SOUND:=Ping}"
 : "${NETGUARD_S2_SOUND:=Sosumi}"
 : "${NETGUARD_S3_SOUND:=Submarine}"

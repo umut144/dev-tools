@@ -41,10 +41,10 @@ Die Funktion ruft sudo dort auf, wo es gebraucht wird.
 
 Gemessen wird in einem gleitenden Fenster von 10 Sekunden:
 
-1. **ab 10 MB** (= 1,0 MB/s anhaltend) - Warnton `Ping`, Mitteilung, sonst nichts
-2. **ab 26 MB** (= 2,6 MB/s) - `Sosumi` dreimal, der Verursacher wird mit
+1. **ab 5 MB** (= 0,5 MB/s anhaltend) - Warnton `Ping`, Mitteilung, sonst nichts
+2. **ab 10 MB** (= 1,0 MB/s) - `Sosumi` dreimal, der Verursacher wird mit
    `SIGSTOP` eingefroren. Reversibel: `netguard unblock` setzt ihn fort.
-3. **ab 47 MB** (= 4,7 MB/s) - `Submarine` fuenfmal, Sprachansage, Netz aus.
+3. **ab 20 MB** (= 2,0 MB/s) - `Submarine` fuenfmal, Sprachansage, Netz aus.
 
 Die Abstaende zwischen den Stufen (16 und 21 MB) sind mit Absicht groesser
 als der Zuwachs eines Messtakts: geprueft wird erst, wenn ein Sample fertig
@@ -120,11 +120,10 @@ Der Testmodus misst nichts Echtes und fuehrt keine Aktion aus - er schreibt
 `[SIMULATION] wuerde jetzt ... ausfuehren` und spielt die echten Toene, damit
 man Lautstaerke und Abfolge im Voraus hoert. Er loggt in ein eigenes
 Unterverzeichnis, damit das gezaehlte Tagesvolumen unberuehrt bleibt. Mit den
-Standard-4 MB/s (`netguard test`) faellt Stufe 1 nach etwa 3 s, Stufe 2 nach
-etwa 7 s - Stufe 3 (47 MB) wird bei 4 MB/s aber gar nicht erreicht, weil das
-10-Sekunden-Fenster bei Dauerlast auf `Rate x Fenster` = 40 MB deckelt, sobald
-die ersten Samples wieder herausrutschen. Um auch Stufe 3 zu sehen, hoeher
-ansetzen, z. B. `netguard test 6` (60 MB Deckel).
+Standard-4 MB/s (`netguard test`) faellt Stufe 1 nach etwa 2 s, Stufe 2 nach
+etwa 3-4 s und Stufe 3 (20 MB) nach etwa 5-6 s. Das 10-Sekunden-Fenster deckelt
+bei Dauerlast auf `Rate x Fenster` (hier 40 MB), liegt damit aber ueber allen
+drei Schwellen.
 
 ## Wie gemessen wird
 

@@ -53,6 +53,10 @@ sind nur `.git`, `target`, `node_modules`, `__pycache__`, `.venv`, `venv`,
 * JPEG/PNG werden verkleinert (`--max-dim`, Default 2048px laengste Kante);
   PNG bleibt PNG (verlustfrei, behaelt Transparenz), JPEG wird zusaetzlich
   mit `--quality` (Default 82) neu komprimiert.
+* Bilder, die schon kleiner als `--max-dim` sind, werden **nie hochskaliert**
+  (`sips -Z` allein wuerde das tun). Ein PNG, das schon klein genug ist,
+  wird unveraendert uebernommen. Waere das Ergebnis groesser als das
+  Original, wird ebenfalls das Original behalten.
 * `--force-jpeg` wandelt auch PNGs verlustbehaftet zu JPEG (kleiner, aber
   keine Transparenz mehr) - nur wenn du das wirklich willst.
 

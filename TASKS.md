@@ -18,8 +18,8 @@ Stand nach dem externen Review. Behobenes steht unten.
       lassen kann. Damit kann Stufe 2 gegen eine ausser Kontrolle geratene
       iCloud-Synchronisation nichts ausrichten. Denkbar waere, stattdessen
       gezielt die Synchronisation zu pausieren, statt den Prozess anzuhalten.
-- [ ] **Schwellen nachjustieren.** 10/26/47 MB je 10 s (zuvor 12/30/55,
-      davor 12/24/36) - bewusst eher zu eng als zu locker eingestellt. Nach
+- [ ] **Schwellen nachjustieren.** 5/10/20 MB je 10 s (zuvor 10/26/47,
+      davor 12/30/55, davor 12/24/36) - bewusst eher zu eng als zu locker eingestellt. Nach
       ein paar Tagen zeigt `netguard report`, was real ausgeloest hat: Stufe
       1 bei ganz normalem Arbeiten heisst, 10 MB ist zu scharf; `grep -c
       uebersprungen` ueber den Report heisst, der Messtakt von 2 s ist fuer

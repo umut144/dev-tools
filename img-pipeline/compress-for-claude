@@ -41,6 +41,7 @@ still eine kaputte oder fehlende Datei.
 """
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 
@@ -117,8 +118,34 @@ def tmp_path_for(dst):
     return os.path.join(d or ".", f".{stem}.compressimgs-tmp{ext}")
 
 
+def get_dims(path):
+    """(breite, hoehe) per sips, oder None wenn nicht ermittelbar."""
+    r = subprocess.run([SIPS, "-g", "pixelWidth", "-g", "pixelHeight", path],
+                        capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    w = h = None
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("pixelWidth:"):
+            w = int(line.split(":", 1)[1])
+        elif line.startswith("pixelHeight:"):
+            h = int(line.split(":", 1)[1])
+    return (w, h) if w and h else None
+
+
+def needs_resize(src, max_dim):
+    """True nur, wenn die laengste Kante WIRKLICH groesser als max_dim ist.
+    `sips -Z` skaliert sonst auch kleinere Bilder HOCH (mehr Pixel, groessere
+    Datei). Unbekannte Groesse -> resizen; der Groessen-Check faengt es ab."""
+    dims = get_dims(src)
+    return dims is None or max(dims) > max_dim
+
+
 def run_sips(src, dst, max_dim, quality, to_jpeg):
-    cmd = [SIPS, "-Z", str(max_dim)]
+    cmd = [SIPS]
+    if needs_resize(src, max_dim):
+        cmd += ["-Z", str(max_dim)]
     if to_jpeg:
         cmd += ["-s", "format", "jpeg", "-s", "formatOptions", str(quality)]
     cmd += [src, "--out", dst]
@@ -140,6 +167,11 @@ def compress_replace(src, max_dim, quality, force_jpeg, redo):
             return "skip", dst, None
 
     orig_size = os.path.getsize(src)
+    if not changes_ext and not to_jpeg and not needs_resize(src, max_dim):
+        # PNG, schon klein genug: sips wuerde nur neu kodieren -> nichts tun.
+        write_marker(src)
+        return "kept", orig_size, orig_size
+
     tmp_dst = tmp_path_for(dst)
     r = run_sips(src, tmp_dst, max_dim, quality, to_jpeg)
     if r.returncode != 0 or not os.path.exists(tmp_dst):
@@ -149,6 +181,12 @@ def compress_replace(src, max_dim, quality, force_jpeg, redo):
             except OSError:
                 pass
         return "error", (r.stderr or r.stdout).strip(), None
+
+    if not changes_ext and os.path.getsize(tmp_dst) >= orig_size:
+        # Ergebnis waere nicht kleiner -> Original behalten.
+        os.remove(tmp_dst)
+        write_marker(src)
+        return "kept", orig_size, orig_size
 
     os.replace(tmp_dst, dst)          # atomarer Tausch, kein halb-fertiger Zustand
     if changes_ext:
@@ -172,11 +210,21 @@ def compress_sidecar(src, max_dim, quality, force_jpeg, redo):
             pass
 
     orig_size = os.path.getsize(src)
+    same_format = os.path.splitext(dst)[1].lower() == ext
+    if same_format and not to_jpeg and not needs_resize(src, max_dim):
+        # PNG, schon klein genug: unveraendert als _compressed uebernehmen.
+        shutil.copy2(src, dst)
+        return "kept", orig_size, orig_size
+
     r = run_sips(src, dst, max_dim, quality, to_jpeg)
     if r.returncode != 0 or not os.path.exists(dst):
         return "error", (r.stderr or r.stdout).strip(), None
 
     new_size = os.path.getsize(dst)
+    if same_format and new_size >= orig_size:
+        # Ergebnis waere groesser als das Original -> Original kopieren.
+        shutil.copy2(src, dst)
+        return "kept", orig_size, orig_size
     return "ok", orig_size, new_size
 
 
@@ -237,7 +285,7 @@ def main():
         print(f"{scope}\n")
 
     total_before = total_after = 0
-    ok = skipped = failed = 0
+    ok = skipped = failed = kept = 0
     for src in sources:
         status, a, b = compress_one(src, args.max_dim, args.quality,
                                      args.force_jpeg, args.redo,
@@ -245,6 +293,12 @@ def main():
         if status == "skip":
             skipped += 1
             print(f"  {src:<55} bereits aktuell -> {os.path.basename(a)}")
+        elif status == "kept":
+            kept += 1
+            total_before += a
+            total_after += b
+            print(f"  {src:<55} {human(a):>9}  schon optimal, "
+                  f"unveraendert uebernommen")
         elif status == "error":
             failed += 1
             print(f"  FEHLER  {src}: {a}", file=sys.stderr)
@@ -258,6 +312,9 @@ def main():
                   f"{human(new_size):>9}  ({saved:4.0f}% kleiner)")
 
     print()
+    if kept:
+        print(f"{kept} Bild(er) waren schon klein genug und wurden nicht "
+              f"veraendert (kein Hochskalieren, keine groessere Datei).")
     if ok:
         saved = 100 * (1 - total_after / total_before) if total_before else 0
         print(f"{ok} komprimiert ({human(total_before)} -> "

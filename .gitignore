@@ -1,10 +1,34 @@
+# macOS / Editor
 .DS_Store
+.idea/
+.vscode/
+
+# Python
 __pycache__/
 *.py[cod]
-*.venv/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
 
-# Logs bleiben lokal: sie enthalten vollstaendige Kommandozeilen
+# Sicherungskopien und Aufräum-Reste
+*.bak
+*.bak-*
+_to_delete/
+
+# Logs bleiben lokal: sie enthalten vollständige Kommandozeilen
 netguard/logs/*
 !netguard/logs/.gitkeep
 *.jsonl
 *.log
+
+# Lokale Testbilder fuer img-pipeline
+img-pipeline/bildtest/
+
+# KI-Assistenten-Anweisungen bleiben lokal
+CLAUDE.md
+AGENTS.md
+.claude/
